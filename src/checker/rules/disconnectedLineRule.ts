@@ -23,13 +23,32 @@ function sharesEndpoint(a: PathData, b: PathData): boolean {
   )
 }
 
-// Style key for grouping — excludes positional and identity attributes
+// Style key for grouping — only stroke properties matter for laser cutting.
+// Parses stroke/stroke-width/stroke-opacity from both the style="" attribute
+// and individual presentation attributes; fill is intentionally ignored.
 function styleKey(el: Element): string {
-  return Array.from(el.attributes)
-    .filter(a => !['x1', 'y1', 'x2', 'y2', 'id', 'd'].includes(a.name))
-    .map(a => `${a.name}=${a.value}`)
-    .sort()
-    .join(';')
+  const strokeProps: Record<string, string> = {}
+
+  // Collect individual presentation attributes first (lower priority)
+  for (const attr of Array.from(el.attributes)) {
+    if (['stroke', 'stroke-width', 'stroke-opacity'].includes(attr.name)) {
+      strokeProps[attr.name] = attr.value
+    }
+  }
+
+  // Parse inline style="" — overrides individual attributes
+  const styleAttr = el.getAttribute('style') ?? ''
+  for (const decl of styleAttr.split(';')) {
+    const colon = decl.indexOf(':')
+    if (colon === -1) continue
+    const prop = decl.slice(0, colon).trim()
+    const val = decl.slice(colon + 1).trim()
+    if (['stroke', 'stroke-width', 'stroke-opacity'].includes(prop)) {
+      strokeProps[prop] = val
+    }
+  }
+
+  return Object.entries(strokeProps).sort().map(([k, v]) => `${k}=${v}`).join(';')
 }
 
 function isLine(el: Element): boolean {
@@ -149,7 +168,7 @@ function chainSegments(segs: PathData[]): Point[][] {
           remaining.splice(i, 1); extended = true; break
         } else if (pointsEqual(rHead, head)) {
           // Head of chain connects to head of this segment → prepend reversed
-          chain.unshift(...[...pts].reverse().slice(1))
+          chain.unshift(...[...pts].reverse().slice(0, -1))
           remaining.splice(i, 1); extended = true; break
         }
       }
