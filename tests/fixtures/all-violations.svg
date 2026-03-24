@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+  <g id="mygroup">
+    <path d="M10,10 L50,10 M60,60 L90,90" stroke="#000000" fill="none"/>
+    <path id="dup1" d="M5,5 L95,95" stroke="red" fill="none"/>
+    <path id="dup2" d="M5,5 L95,95" stroke="red" fill="none"/>
+  </g>
+</svg>

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pwsh --version)",
+      "Bash(powershell -Command '$PSVersionTable.PSVersion')",
+      "Bash(powershell -File \".specify/scripts/powershell/check-prerequisites.ps1\" -Json -PathsOnly)",
+      "Bash(powershell -File \".specify/scripts/powershell/setup-plan.ps1\" -Json)",
+      "Bash(powershell -File \".specify/scripts/powershell/update-agent-context.ps1\" -AgentType claude)",
+      "Bash(npm --version)",
+      "Bash(npm create:*)",
+      "Bash(npx create-vite@latest . --template react-ts)",
+      "Bash(printf 'y\\\\n')",
+      "Bash(npx --yes create-vite@latest . --template react-ts)",
+      "Bash(npm install:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
+      "Bash(node -e \"const p = require\\(''./package.json''\\); const keys = [...Object.keys\\(p.dependencies||{}\\), ...Object.keys\\(p.devDependencies||{}\\)]; const all = {...p.dependencies,...p.devDependencies}; keys.forEach\\(k => console.log\\(k, all[k]\\)\\)\")"
+    ]
+  }
+}
