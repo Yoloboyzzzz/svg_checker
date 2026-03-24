@@ -14,7 +14,8 @@
       "Bash(npm install:*)",
       "Bash(npm test:*)",
       "Bash(npm run:*)",
-      "Bash(node -e \"const p = require\\(''./package.json''\\); const keys = [...Object.keys\\(p.dependencies||{}\\), ...Object.keys\\(p.devDependencies||{}\\)]; const all = {...p.dependencies,...p.devDependencies}; keys.forEach\\(k => console.log\\(k, all[k]\\)\\)\")"
+      "Bash(node -e \"const p = require\\(''./package.json''\\); const keys = [...Object.keys\\(p.dependencies||{}\\), ...Object.keys\\(p.devDependencies||{}\\)]; const all = {...p.dependencies,...p.devDependencies}; keys.forEach\\(k => console.log\\(k, all[k]\\)\\)\")",
+      "Bash(npx vitest:*)"
     ]
   }
 }

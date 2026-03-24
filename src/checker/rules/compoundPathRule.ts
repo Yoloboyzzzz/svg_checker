@@ -7,7 +7,7 @@ function isCompound(d: string): boolean {
 export const compoundPathRule: CheckRule = {
   category: 'compound-paths',
   label: 'No Compound Paths',
-  defaultWeight: 1/3,
+  defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
     const paths = Array.from(doc.querySelectorAll('path'))

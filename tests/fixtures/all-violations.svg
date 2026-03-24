@@ -4,4 +4,5 @@
     <path id="dup1" d="M5,5 L95,95" stroke="red" fill="none"/>
     <path id="dup2" d="M5,5 L95,95" stroke="red" fill="none"/>
   </g>
+  <line x1="0" y1="0" x2="100" y2="100" stroke="#000000"/>
 </svg>

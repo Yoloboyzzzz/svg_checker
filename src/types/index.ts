@@ -1,4 +1,4 @@
-export type CheckCategory = 'groups' | 'compound-paths' | 'duplicate-paths'
+export type CheckCategory = 'groups' | 'compound-paths' | 'duplicate-paths' | 'disconnected-lines'
 
 export interface ViolationDetail {
   elementIndex: number
@@ -19,7 +19,7 @@ export interface QualityReport {
   filename: string
   fileSize: number
   score: number
-  checks: [CheckResult, CheckResult, CheckResult]
+  checks: CheckResult[]
 }
 
 export interface FixedSVG {

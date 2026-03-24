@@ -6,8 +6,8 @@ export function createFixer(rules: CheckRule[], analyzer: SVGAnalyzer): SVGFixer
   return {
     fix(svgString: string, filename: string, _fileSize: number): FixedSVG {
       const doc = parseSVG(svgString)
-      // Apply fixes in order: groups → compound-paths → duplicate-paths
-      const ordered = ['groups', 'compound-paths', 'duplicate-paths']
+      // Apply fixes in order: groups → compound-paths → duplicate-paths → disconnected-lines
+      const ordered = ['groups', 'compound-paths', 'duplicate-paths', 'disconnected-lines']
       for (const cat of ordered) {
         const rule = rules.find(r => r.category === cat)
         if (rule) rule.fix(doc)

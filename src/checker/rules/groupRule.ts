@@ -1,12 +1,16 @@
 import type { CheckResult, CheckRule } from '../../types'
 
+function isLayer(el: Element): boolean {
+  return el.getAttribute('inkscape:groupmode') === 'layer'
+}
+
 export const groupRule: CheckRule = {
   category: 'groups',
   label: 'No Groups',
-  defaultWeight: 1/3,
+  defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
-    const groups = Array.from(doc.querySelectorAll('g'))
+    const groups = Array.from(doc.querySelectorAll('g')).filter(g => !isLayer(g))
     const violations = groups.map((el, i) => ({
       elementIndex: i,
       elementId: el.getAttribute('id'),
@@ -23,11 +27,11 @@ export const groupRule: CheckRule = {
   },
 
   fix(doc: Document): void {
-    // Process deepest groups first (bottom-up)
-    let groups = Array.from(doc.querySelectorAll('g'))
+    // Process deepest non-layer groups first (bottom-up)
+    let groups = Array.from(doc.querySelectorAll('g')).filter(g => !isLayer(g))
     while (groups.length > 0) {
-      // Pick a leaf group (no nested groups)
-      const leaf = groups.find(g => g.querySelector('g') === null) ?? groups[0]
+      // Pick a leaf group (no nested non-layer groups)
+      const leaf = groups.find(g => g.querySelector('g:not([inkscape\\:groupmode="layer"])') === null) ?? groups[0]
       const parent = leaf.parentNode!
       const transform = leaf.getAttribute('transform')
       const children = Array.from(leaf.childNodes)
@@ -42,7 +46,7 @@ export const groupRule: CheckRule = {
         parent.insertBefore(child, leaf)
       }
       parent.removeChild(leaf)
-      groups = Array.from(doc.querySelectorAll('g'))
+      groups = Array.from(doc.querySelectorAll('g')).filter(g => !isLayer(g))
     }
   }
 }

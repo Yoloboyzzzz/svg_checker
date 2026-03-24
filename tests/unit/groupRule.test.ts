@@ -45,6 +45,19 @@ describe('groupRule.fix()', () => {
     expect(result.pass).toBe(true)
   })
 
+  it('does not remove Inkscape layer <g> elements', async () => {
+    const { groupRule } = await import('../../src/checker/rules/groupRule')
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape">
+      <g inkscape:groupmode="layer" id="layer1"><path d="M0,0 L10,10"/></g>
+    </svg>`
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(svg, 'image/svg+xml')
+    const result = groupRule.check(doc)
+    expect(result.pass).toBe(true)
+    groupRule.fix(doc)
+    expect(doc.querySelector('g')).not.toBeNull()
+  })
+
   it('inlines transform attribute from <g> onto children', async () => {
     const { groupRule } = await import('../../src/checker/rules/groupRule')
     const svg = `<svg xmlns="http://www.w3.org/2000/svg">

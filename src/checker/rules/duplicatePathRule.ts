@@ -18,7 +18,7 @@ function getStrokeKey(el: Element): string {
 export const duplicatePathRule: CheckRule = {
   category: 'duplicate-paths',
   label: 'No Duplicate Paths',
-  defaultWeight: 1/3,
+  defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
     const paths = Array.from(doc.querySelectorAll('path'))
