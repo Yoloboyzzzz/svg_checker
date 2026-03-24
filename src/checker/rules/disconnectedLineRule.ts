@@ -1,12 +1,13 @@
 import type { CheckResult, CheckRule } from '../../types'
 
-interface Segment {
-  x1: number; y1: number
-  x2: number; y2: number
+interface Point { x: number; y: number }
+
+interface PathData {
+  start: Point
+  end: Point
+  points: Point[]   // all points in path order (for merging)
   el: Element
 }
-
-interface Point { x: number; y: number }
 
 // Generous tolerance to accommodate CAD floating-point coordinates
 const EPS = 0.5
@@ -15,12 +16,10 @@ function pointsEqual(a: Point, b: Point): boolean {
   return Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS
 }
 
-function sharesEndpoint(a: Segment, b: Segment): boolean {
-  const ap1 = { x: a.x1, y: a.y1 }, ap2 = { x: a.x2, y: a.y2 }
-  const bp1 = { x: b.x1, y: b.y1 }, bp2 = { x: b.x2, y: b.y2 }
+function sharesEndpoint(a: PathData, b: PathData): boolean {
   return (
-    pointsEqual(ap1, bp1) || pointsEqual(ap1, bp2) ||
-    pointsEqual(ap2, bp1) || pointsEqual(ap2, bp2)
+    pointsEqual(a.start, b.start) || pointsEqual(a.start, b.end) ||
+    pointsEqual(a.end, b.start)   || pointsEqual(a.end, b.end)
   )
 }
 
@@ -33,67 +32,126 @@ function styleKey(el: Element): string {
     .join(';')
 }
 
-// Returns start/end points if the path is a single line segment, null otherwise.
-// Handles both explicit L/l and implicit line commands (SVG allows "M x,y x,y" and "m dx,dy dx,dy").
-function parseLineSegment(d: string): { x1: number; y1: number; x2: number; y2: number } | null {
-  // [Ll]? makes the line command letter optional — SVG implicit line after M/m
-  const m = d.trim().match(
-    /^([Mm])\s*([-\d.e+]+)[,\s]+([-\d.e+]+)\s*([Ll])?\s*([-\d.e+]+)[,\s]+([-\d.e+]+)\s*$/
-  )
-  if (!m) return null
-  const moveCmd = m[1]   // 'M' or 'm'
-  const x1 = parseFloat(m[2])
-  const y1 = parseFloat(m[3])
-  const lineCmd = m[4]   // 'L', 'l', or undefined (implicit)
-  const dx = parseFloat(m[5])
-  const dy = parseFloat(m[6])
-  // Implicit line after 'm' is relative; implicit line after 'M' is absolute (SVG spec §8.3.2)
-  const isRelative = lineCmd === 'l' || (lineCmd === undefined && moveCmd === 'm')
-  return { x1, y1, x2: isRelative ? x1 + dx : dx, y2: isRelative ? y1 + dy : dy }
-}
-
 function isLine(el: Element): boolean {
   return el.tagName.toLowerCase() === 'line'
 }
 
-// Collects <line> elements and single-segment <path> elements
-function collectSegments(doc: Document): Segment[] {
-  const result: Segment[] = []
+// Parses any path containing only M/m/L/l/H/h/V/v commands into an ordered
+// list of absolute points. Returns null for curves, closed paths (Z), or
+// compound paths (multiple M commands) — those are handled by other rules.
+function extractPoints(d: string): Point[] | null {
+  // Reject curves, close commands, and compound paths
+  if (/[CcSsQqTtAaZz]/.test(d)) return null
+  if ((d.match(/[Mm]/g) ?? []).length > 1) return null
+
+  const points: Point[] = []
+  let x = 0, y = 0
+
+  for (const token of d.trim().split(/(?=[MmLlHhVv])/)) {
+    if (!token.trim()) continue
+    const cmd = token[0]
+    const nums = token.slice(1).match(/[-+]?(?:\d*\.?\d+)(?:[eE][-+]?\d+)?/g)
+    const args = (nums ?? []).map(Number)
+
+    switch (cmd) {
+      case 'M':
+        for (let i = 0; i + 1 < args.length; i += 2) {
+          x = args[i]; y = args[i + 1]; points.push({ x, y })
+        }
+        break
+      case 'm':
+        for (let i = 0; i + 1 < args.length; i += 2) {
+          x += args[i]; y += args[i + 1]; points.push({ x, y })
+        }
+        break
+      case 'L':
+        for (let i = 0; i + 1 < args.length; i += 2) {
+          x = args[i]; y = args[i + 1]; points.push({ x, y })
+        }
+        break
+      case 'l':
+        for (let i = 0; i + 1 < args.length; i += 2) {
+          x += args[i]; y += args[i + 1]; points.push({ x, y })
+        }
+        break
+      case 'H':
+        for (const a of args) { x = a; points.push({ x, y }) }
+        break
+      case 'h':
+        for (const a of args) { x += a; points.push({ x, y }) }
+        break
+      case 'V':
+        for (const a of args) { y = a; points.push({ x, y }) }
+        break
+      case 'v':
+        for (const a of args) { y += a; points.push({ x, y }) }
+        break
+    }
+  }
+
+  return points.length >= 2 ? points : null
+}
+
+function collectSegments(doc: Document): PathData[] {
+  const result: PathData[] = []
+
   for (const el of Array.from(doc.querySelectorAll('line'))) {
-    result.push({
-      x1: parseFloat(el.getAttribute('x1') ?? '0'),
-      y1: parseFloat(el.getAttribute('y1') ?? '0'),
-      x2: parseFloat(el.getAttribute('x2') ?? '0'),
-      y2: parseFloat(el.getAttribute('y2') ?? '0'),
-      el
-    })
+    const x1 = parseFloat(el.getAttribute('x1') ?? '0')
+    const y1 = parseFloat(el.getAttribute('y1') ?? '0')
+    const x2 = parseFloat(el.getAttribute('x2') ?? '0')
+    const y2 = parseFloat(el.getAttribute('y2') ?? '0')
+    const points = [{ x: x1, y: y1 }, { x: x2, y: y2 }]
+    result.push({ start: points[0], end: points[1], points, el })
   }
+
   for (const el of Array.from(doc.querySelectorAll('path'))) {
-    const coords = parseLineSegment(el.getAttribute('d') ?? '')
-    if (coords) result.push({ ...coords, el })
+    const pts = extractPoints(el.getAttribute('d') ?? '')
+    if (!pts) continue
+    result.push({ start: pts[0], end: pts[pts.length - 1], points: pts, el })
   }
+
   return result
 }
 
-function chainSegments(segs: Segment[]): Point[][] {
-  const remaining = segs.map(s => ({ p1: { x: s.x1, y: s.y1 }, p2: { x: s.x2, y: s.y2 } }))
+// Chains PathData entries by shared endpoints, concatenating full point arrays.
+// Connected segments (head-to-tail, tail-to-tail, head-to-head) are merged;
+// isolated segments become single-point chains.
+function chainSegments(segs: PathData[]): Point[][] {
+  const remaining = segs.map(s => ({ points: [...s.points] }))
   const chains: Point[][] = []
 
   while (remaining.length > 0) {
     const first = remaining.splice(0, 1)[0]
-    const chain: Point[] = [first.p1, first.p2]
+    const chain: Point[] = [...first.points]
 
     let extended = true
     while (extended) {
       extended = false
       const tail = chain[chain.length - 1]
       const head = chain[0]
+
       for (let i = 0; i < remaining.length; i++) {
-        const { p1, p2 } = remaining[i]
-        if      (pointsEqual(p1, tail))  { chain.push(p2);    remaining.splice(i, 1); extended = true; break }
-        else if (pointsEqual(p2, tail))  { chain.push(p1);    remaining.splice(i, 1); extended = true; break }
-        else if (pointsEqual(p2, head))  { chain.unshift(p1); remaining.splice(i, 1); extended = true; break }
-        else if (pointsEqual(p1, head))  { chain.unshift(p2); remaining.splice(i, 1); extended = true; break }
+        const pts = remaining[i].points
+        const rHead = pts[0]
+        const rTail = pts[pts.length - 1]
+
+        if (pointsEqual(rHead, tail)) {
+          // Tail of chain connects to head of this segment → append (skip shared point)
+          chain.push(...pts.slice(1))
+          remaining.splice(i, 1); extended = true; break
+        } else if (pointsEqual(rTail, tail)) {
+          // Tail of chain connects to tail of this segment → append reversed
+          chain.push(...[...pts].reverse().slice(1))
+          remaining.splice(i, 1); extended = true; break
+        } else if (pointsEqual(rTail, head)) {
+          // Head of chain connects to tail of this segment → prepend (skip shared point)
+          chain.unshift(...pts.slice(0, -1))
+          remaining.splice(i, 1); extended = true; break
+        } else if (pointsEqual(rHead, head)) {
+          // Head of chain connects to head of this segment → prepend reversed
+          chain.unshift(...[...pts].reverse().slice(1))
+          remaining.splice(i, 1); extended = true; break
+        }
       }
     }
     chains.push(chain)
@@ -108,40 +166,42 @@ export const disconnectedLineRule: CheckRule = {
 
   check(doc: Document): CheckResult {
     const segments = collectSegments(doc)
+    const violatingSet = new Set<Element>()
 
-    // <line> elements are always violations.
-    // Single-segment <path> elements are violations only when they share an endpoint
-    // with another segment (they can be joined into a polyline).
-    const lineSegs = segments.filter(s => isLine(s.el))
-    const pathSegs = segments.filter(s => !isLine(s.el))
+    // <line> elements are always violations
+    for (const seg of segments) {
+      if (isLine(seg.el)) violatingSet.add(seg.el)
+    }
 
-    const joinablePathIndices = new Set<number>()
-    for (let i = 0; i < segments.length; i++) {
-      for (let j = i + 1; j < segments.length; j++) {
-        if (sharesEndpoint(segments[i], segments[j])) {
-          if (!isLine(segments[i].el)) joinablePathIndices.add(i)
-          if (!isLine(segments[j].el)) joinablePathIndices.add(j)
+    // Paths that share an endpoint with another path of the same style
+    // can be joined and are therefore violations
+    const groups = new Map<string, PathData[]>()
+    for (const seg of segments) {
+      const key = styleKey(seg.el)
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(seg)
+    }
+
+    for (const segs of groups.values()) {
+      for (let i = 0; i < segs.length; i++) {
+        for (let j = i + 1; j < segs.length; j++) {
+          if (sharesEndpoint(segs[i], segs[j])) {
+            violatingSet.add(segs[i].el)
+            violatingSet.add(segs[j].el)
+          }
         }
       }
     }
-    const joinablePaths = segments.filter((s, i) => !isLine(s.el) && joinablePathIndices.has(i))
 
-    const allViolations = [...lineSegs, ...joinablePaths]
-    const violations = allViolations.map((seg, i) => {
-      const id = seg.el.getAttribute('id')
-      if (isLine(seg.el)) {
-        return {
-          elementIndex: i,
-          elementId: id,
-          description: `<line> (${seg.x1},${seg.y1}) → (${seg.x2},${seg.y2}) — should be part of a connected path`
-        }
+    const violations = Array.from(violatingSet).map((el, i) => {
+      const id = el.getAttribute('id')
+      if (isLine(el)) {
+        const x1 = el.getAttribute('x1') ?? '0', y1 = el.getAttribute('y1') ?? '0'
+        const x2 = el.getAttribute('x2') ?? '0', y2 = el.getAttribute('y2') ?? '0'
+        return { elementIndex: i, elementId: id, description: `<line> (${x1},${y1}) → (${x2},${y2}) — should be part of a connected path` }
       }
-      const d = seg.el.getAttribute('d') ?? ''
-      return {
-        elementIndex: i,
-        elementId: id,
-        description: `Single-segment path "${d.length > 40 ? d.slice(0, 40) + '…' : d}" — should be joined with adjacent segments`
-      }
+      const d = el.getAttribute('d') ?? ''
+      return { elementIndex: i, elementId: id, description: `Path "${d.length > 40 ? d.slice(0, 40) + '…' : d}" — should be joined with adjacent segment` }
     })
 
     return {
@@ -155,12 +215,11 @@ export const disconnectedLineRule: CheckRule = {
   },
 
   fix(doc: Document): void {
-    // Fix processes ALL <line> and single-segment <path> elements —
-    // connected ones get chained into polylines, isolated ones become proper <path> elements.
     const segments = collectSegments(doc)
     if (segments.length === 0) return
 
-    const groups = new Map<string, Segment[]>()
+    // Group by visual style so only same-style segments are merged
+    const groups = new Map<string, PathData[]>()
     for (const seg of segments) {
       const key = styleKey(seg.el)
       if (!groups.has(key)) groups.set(key, [])
