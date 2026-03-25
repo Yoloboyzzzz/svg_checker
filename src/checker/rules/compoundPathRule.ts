@@ -108,6 +108,10 @@ function splitCompoundPath(d: string): string[] {
   return result
 }
 
+function hasDrawCommands(d: string): boolean {
+  return /[LlHhVvCcSsQqTtAa]/.test(d)
+}
+
 export const compoundPathRule: CheckRule = {
   category: 'compound-paths',
   label: 'No Compound Paths',
@@ -138,8 +142,12 @@ export const compoundPathRule: CheckRule = {
     for (const path of paths) {
       const d = path.getAttribute('d') ?? ''
       if (!isCompound(d)) continue
-      const subPaths = splitCompoundPath(d)
+      const subPaths = splitCompoundPath(d).filter(hasDrawCommands)
       const parent = path.parentNode!
+      if (subPaths.length === 0) {
+        parent.removeChild(path)
+        continue
+      }
       for (let i = subPaths.length - 1; i >= 0; i--) {
         const newPath = path.cloneNode(false) as Element
         newPath.setAttribute('d', subPaths[i])

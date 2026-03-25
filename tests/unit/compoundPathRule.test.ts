@@ -75,11 +75,11 @@ describe('compoundPathRule.fix()', () => {
     expect(d2).toContain('l ')   // implicit pairs converted to explicit relative l
   })
 
-  it('handles three sub-paths with chained relative m offsets', async () => {
+  it('handles three sub-paths with chained relative m offsets, dropping M-only sub-paths', async () => {
     const { compoundPathRule } = await import('../../src/checker/rules/compoundPathRule')
-    // Sub-path 1 ends at (200,100)
-    // Sub-path 2: m 50,50 → starts at (250,150), ends at (250,150) [no further commands]
-    // Sub-path 3: m 10,10 → starts at (260,160)
+    // Sub-path 1 ends at (200,100) and has an L draw command → kept.
+    // Sub-path 2: m 50,50 → starts at (250,150) with no draw commands → degenerate, dropped.
+    // Sub-path 3: m 10,10 → starts at (260,160) with no draw commands → degenerate, dropped.
     const svg = `<svg xmlns="http://www.w3.org/2000/svg">
       <path d="M 100,100 L 200,100 m 50,50 m 10,10" style="stroke:#000"/>
     </svg>`
@@ -87,8 +87,19 @@ describe('compoundPathRule.fix()', () => {
     const doc = parser.parseFromString(svg, 'image/svg+xml')
     compoundPathRule.fix(doc)
     const paths = doc.querySelectorAll('path')
+    expect(paths.length).toBe(1)
+    expect(paths[0].getAttribute('d')).toBe('M 100,100 L 200,100')
+  })
+
+  it('retains id on first sub-path only, removes id from subsequent sub-paths', async () => {
+    const { compoundPathRule } = await import('../../src/checker/rules/compoundPathRule')
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(loadFixture('with-id-compound-path.svg'), 'image/svg+xml')
+    compoundPathRule.fix(doc)
+    const paths = doc.querySelectorAll('path')
     expect(paths.length).toBe(3)
-    expect(paths[1].getAttribute('d')).toBe('M 250,150')
-    expect(paths[2].getAttribute('d')).toBe('M 260,160')
+    expect(paths[0].getAttribute('id')).toBe('mypath')
+    expect(paths[1].getAttribute('id')).toBeNull()
+    expect(paths[2].getAttribute('id')).toBeNull()
   })
 })

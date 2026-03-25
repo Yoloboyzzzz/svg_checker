@@ -43,7 +43,7 @@ npm run preview      # Preview prod build
 
 - **TypeScript strict mode** — no `any`, no implicit returns
 - **Pure functions** for all checker logic — `check()` MUST NOT mutate the DOM
-- **Fix ordering**: ungroup → split compound paths → deduplicate (always this order)
+- **Fix ordering**: ungroup → split compound paths → deduplicate → join connected segments (always this order)
 - **No inline styles** — use Tailwind utility classes only
 - **DOMPurify before any `dangerouslySetInnerHTML`** — no exceptions
 

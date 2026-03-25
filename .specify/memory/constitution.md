@@ -1,25 +1,33 @@
 <!--
   SYNC IMPACT REPORT
   ==================
-  Version change: (none) → 1.0.0  (initial ratification)
-  Bump rationale: MAJOR — first concrete version from blank template.
+  Version change: 1.0.0 → 2.0.0  (MAJOR — Principle II redefined; Technology section overhauled)
+  Bump rationale: MAJOR — Principle II ("CLI Interface") replaced with "Web Application Interface",
+    a backward-incompatible governance change. Technology & Quality Standards completely revised
+    to match the actual stack (TypeScript/React/Vitest, replacing stale Python/pytest references).
+    Fix-pipeline ordering codified as a mandatory standard.
 
-  Modified principles:   N/A (first version)
+  Modified principles:
+    II. CLI Interface  →  II. Web Application Interface
+
   Added sections:
-    - Core Principles (I–V)
-    - Technology & Quality Standards
-    - Development Workflow
-    - Governance
+    None — section structure unchanged.
 
-  Removed sections:      N/A
+  Removed sections:
+    None.
 
   Templates reviewed & status:
-    ✅ .specify/templates/plan-template.md   — "Constitution Check" gate aligns with principles
-    ✅ .specify/templates/spec-template.md   — FR/SC structure compatible; no changes needed
-    ✅ .specify/templates/tasks-template.md  — phase/story model compatible; no changes needed
-    ✅ .specify/templates/agent-file-template.md — generic; no principle refs to update
+    ✅ .specify/templates/plan-template.md      — Constitution Check gate is generic; no edits needed.
+    ✅ .specify/templates/spec-template.md      — FR/SC structure compatible; no edits needed.
+    ✅ .specify/templates/tasks-template.md     — Phase/story model compatible; no edits needed.
+    ✅ .specify/templates/agent-file-template.md — Generic; no principle refs to update.
 
-  Deferred TODOs:        None — all placeholders resolved.
+  Follow-up:
+    - specs/001-svg-checker-app/plan.md: The existing "JUSTIFIED VIOLATION" on Principle II is
+      now moot — the constitution reflects the web-UI nature of the project. No edit to plan.md
+      required (it is a historical record); future plans will have no violation on Principle II.
+
+  Deferred TODOs: None — all placeholders resolved.
 -->
 
 # SVG Checker Constitution
@@ -35,16 +43,18 @@ expected detection boundary (valid SVG that passes, invalid SVG that fails).
 **Rationale**: An SVG checker that cries wolf or silently misses issues erodes user trust
 faster than having fewer checks.
 
-### II. CLI Interface
+### II. Web Application Interface
 
-The primary interface MUST be command-line. The tool MUST follow the Unix text-stream
-convention: structured results to stdout, errors and diagnostics to stderr. Both
-human-readable and machine-readable (JSON) output formats MUST be supported via a flag
-(e.g., `--format json`). Exit codes MUST be meaningful: 0 = pass, 1 = violations found,
-2 = tool/input error.
+The primary interface is a browser-based single-page application (SPA). All SVG analysis
+and fixing MUST run entirely in the browser — no backend, no network requests after the
+initial page load, no server-side processing. The checker and fixer core (rules, analyzer,
+fixer) MUST remain fully decoupled from the UI layer so that the logic is independently
+testable without a browser environment.
 
-**Rationale**: CLI-first enables scripting, CI integration, and editor plugin wrappers
-without coupling the core logic to any particular interface.
+**Rationale**: Running entirely in-browser removes the need for infrastructure, keeps user
+data local, and makes the tool instantly deployable as a static site. Decoupling the core
+from the UI ensures logic can be unit-tested in a Node/jsdom environment and could be
+embedded in other contexts without modification.
 
 ### III. Test-Driven Development (NON-NEGOTIABLE)
 
@@ -83,27 +93,32 @@ Monolithic rule logic prevents both.
 
 ## Technology & Quality Standards
 
-- **Language**: Python 3.11+ (default; override in plan.md if another language is chosen
-  before the first feature is implemented — after that the language is locked).
-- **Testing framework**: pytest with 100% branch coverage required for all rule modules.
-- **Linting/formatting**: ruff (lint) + black (format); enforced in CI.
-- **SVG parsing**: rely on stdlib `xml.etree.ElementTree` or `lxml`; do NOT import a
-  full browser rendering engine.
-- **Output schema**: JSON output MUST be versioned (a top-level `"schema_version"` field)
-  so downstream consumers can detect breaking changes.
-- **Performance**: Single-file checks MUST complete in < 500 ms on a 10 MB SVG on
-  commodity hardware; batch mode SHOULD stream results rather than accumulating in memory.
+- **Language**: TypeScript (strict mode — no `any`, no implicit returns).
+- **UI framework**: React 19 (`^19.x`).
+- **Build tool**: Vite 8 (`^8.x`) + `@vitejs/plugin-react`.
+- **Styling**: Tailwind CSS v4 (`^4.x`) via `@tailwindcss/vite`; no PostCSS config required.
+  Inline styles are prohibited — Tailwind utility classes only.
+- **Sanitization**: DOMPurify 3 MUST be applied before any `dangerouslySetInnerHTML`.
+  No exceptions.
+- **Testing**: Vitest 4 + React Testing Library 16 + jsdom 29.
+  100% branch coverage required for all checker rule modules.
+- **Fix-pipeline ordering**: The fixer MUST apply rules in this exact sequence:
+  ungroup → split compound paths → deduplicate → join connected segments.
+  Deviation requires explicit justification in the plan's Complexity Tracking table.
+- **Pure check functions**: All `check()` implementations MUST be pure — they MUST NOT
+  mutate the DOM. `fix()` implementations MUST mutate only the document passed to them.
+- **Performance**: Analysis of a 1 MB SVG MUST complete in < 500 ms in a browser tab on
+  commodity hardware. The full upload-to-score flow MUST complete in < 30 s.
 
 ## Development Workflow
 
 - Every feature MUST start with a `spec.md` (user stories + acceptance criteria).
-- A `plan.md` MUST be completed and pass the Constitution Check before any code is
-  written.
+- A `plan.md` MUST be completed and pass the Constitution Check before any code is written.
 - `tasks.md` drives implementation; tasks are checked off as they are completed.
 - Pull requests MUST reference the task ID(s) they close.
 - No PR merges to `main` without passing CI (lint + tests).
-- Breaking changes to the CLI contract or JSON output schema require a MAJOR version bump
-  of the tool itself (separate from this constitution's version).
+- Breaking changes to the `CheckRule` interface or `QualityReport` schema require a MAJOR
+  version bump of the tool itself (separate from this constitution's version).
 
 ## Governance
 
@@ -119,4 +134,4 @@ All plan.md "Constitution Check" gates MUST verify compliance with Principles I�
 Violations that cannot be avoided MUST be documented in the plan's Complexity Tracking
 table.
 
-**Version**: 1.0.0 | **Ratified**: 2026-03-24 | **Last Amended**: 2026-03-24
+**Version**: 2.0.0 | **Ratified**: 2026-03-24 | **Last Amended**: 2026-03-25

@@ -23,7 +23,14 @@
       "Bash(wc -c \"c:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\ink3remake-fixed \\(1\\)-fixed.svg\")",
       "Bash(awk '{ print length }')",
       "Bash(grep -oc '\"\"M [^\"\"]*M [^\"\"]*\"\"' \"c:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\ink3remake-fixed \\(1\\)-fixed.svg\")",
-      "Bash(grep -oc '\"\"M [^\"\"]*M [^\"\"]*\"\"' \"c:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\ink3remake-fixed \\(1\\).svg\")"
+      "Bash(grep -oc '\"\"M [^\"\"]*M [^\"\"]*\"\"' \"c:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\ink3remake-fixed \\(1\\).svg\")",
+      "Bash(pwsh -Command \".specify/scripts/powershell/create-new-feature.ps1 ''currently when I upload certain files and I fix them I get a file that crashes inkscape when I try to open it.'' -Json -ShortName ''fix-inkscape-compat'' ''Fix fixed SVG crashing Inkscape on open''\")",
+      "Bash(powershell.exe -Command \".specify/scripts/powershell/create-new-feature.ps1 ''currently when I upload certain files and I fix them I get a file that crashes inkscape when I try to open it.'' -Json -ShortName ''fix-inkscape-compat'' ''Fix fixed SVG crashing Inkscape on open''\")",
+      "Bash(where pwsh.exe)",
+      "Bash(where powershell.exe)",
+      "Bash(powershell.exe -Command '$PSVersionTable.PSVersion')",
+      "Bash(powershell.exe -Command \".specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly\")",
+      "Bash(powershell.exe -Command \".specify/scripts/powershell/setup-plan.ps1 -Json\")"
     ]
   }
 }
