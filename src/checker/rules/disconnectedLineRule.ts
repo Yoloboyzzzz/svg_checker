@@ -2,10 +2,13 @@ import type { CheckResult, CheckRule } from '../../types'
 
 interface Point { x: number; y: number }
 
-interface PathData {
+// Instead of collapsing paths to point arrays, we store the raw path-command
+// fragments so that arc commands survive the merge unchanged.
+interface PathFrag {
   start: Point
   end: Point
-  points: Point[]   // all points in path order (for merging)
+  forwardD: string  // path commands (no leading M) from start → end
+  reverseD: string  // path commands (no leading M) from end → start
   el: Element
 }
 
@@ -16,27 +19,20 @@ function pointsEqual(a: Point, b: Point): boolean {
   return Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS
 }
 
-function sharesEndpoint(a: PathData, b: PathData): boolean {
+function sharesEndpoint(a: PathFrag, b: PathFrag): boolean {
   return (
     pointsEqual(a.start, b.start) || pointsEqual(a.start, b.end) ||
     pointsEqual(a.end, b.start)   || pointsEqual(a.end, b.end)
   )
 }
 
-// Style key for grouping — only stroke properties matter for laser cutting.
-// Parses stroke/stroke-width/stroke-opacity from both the style="" attribute
-// and individual presentation attributes; fill is intentionally ignored.
 function styleKey(el: Element): string {
   const strokeProps: Record<string, string> = {}
-
-  // Collect individual presentation attributes first (lower priority)
   for (const attr of Array.from(el.attributes)) {
     if (['stroke', 'stroke-width', 'stroke-opacity'].includes(attr.name)) {
       strokeProps[attr.name] = attr.value
     }
   }
-
-  // Parse inline style="" — overrides individual attributes
   const styleAttr = el.getAttribute('style') ?? ''
   for (const decl of styleAttr.split(';')) {
     const colon = decl.indexOf(':')
@@ -47,8 +43,6 @@ function styleKey(el: Element): string {
       strokeProps[prop] = val
     }
   }
-
-  // Include the transform so paths in different coordinate spaces are never merged
   const transform = el.getAttribute('transform') ?? ''
   return Object.entries(strokeProps).sort().map(([k, v]) => `${k}=${v}`).join(';') + '|transform=' + transform
 }
@@ -57,11 +51,13 @@ function isLine(el: Element): boolean {
   return el.tagName.toLowerCase() === 'line'
 }
 
-// Parses any path containing only M/m/L/l/H/h/V/v commands into an ordered
-// list of absolute points. Returns null for curves, closed paths (Z), or
-// compound paths (multiple M commands) — those are handled by other rules.
-function extractPoints(d: string): Point[] | null {
-  // Reject curves, close commands, and compound paths
+function parseNums(s: string): number[] {
+  return (s.match(/[-+]?(?:\d*\.?\d+)(?:[eE][-+]?\d+)?/g) ?? []).map(Number)
+}
+
+// Parses straight-line paths (M/m/L/l/H/h/V/v only).
+function extractLinearFrag(el: Element): PathFrag | null {
+  const d = el.getAttribute('d') ?? ''
   if (/[CcSsQqTtAaZz]/.test(d)) return null
   if ((d.match(/[Mm]/g) ?? []).length > 1) return null
 
@@ -71,106 +67,134 @@ function extractPoints(d: string): Point[] | null {
   for (const token of d.trim().split(/(?=[MmLlHhVv])/)) {
     if (!token.trim()) continue
     const cmd = token[0]
-    const nums = token.slice(1).match(/[-+]?(?:\d*\.?\d+)(?:[eE][-+]?\d+)?/g)
-    const args = (nums ?? []).map(Number)
-
+    const args = parseNums(token.slice(1))
     switch (cmd) {
-      case 'M':
-        for (let i = 0; i + 1 < args.length; i += 2) {
-          x = args[i]; y = args[i + 1]; points.push({ x, y })
-        }
-        break
-      case 'm':
-        for (let i = 0; i + 1 < args.length; i += 2) {
-          x += args[i]; y += args[i + 1]; points.push({ x, y })
-        }
-        break
-      case 'L':
-        for (let i = 0; i + 1 < args.length; i += 2) {
-          x = args[i]; y = args[i + 1]; points.push({ x, y })
-        }
-        break
-      case 'l':
-        for (let i = 0; i + 1 < args.length; i += 2) {
-          x += args[i]; y += args[i + 1]; points.push({ x, y })
-        }
-        break
-      case 'H':
-        for (const a of args) { x = a; points.push({ x, y }) }
-        break
-      case 'h':
-        for (const a of args) { x += a; points.push({ x, y }) }
-        break
-      case 'V':
-        for (const a of args) { y = a; points.push({ x, y }) }
-        break
-      case 'v':
-        for (const a of args) { y += a; points.push({ x, y }) }
-        break
+      case 'M': for (let i = 0; i + 1 < args.length; i += 2) { x = args[i]; y = args[i + 1]; points.push({ x, y }) } break
+      case 'm': for (let i = 0; i + 1 < args.length; i += 2) { x += args[i]; y += args[i + 1]; points.push({ x, y }) } break
+      case 'L': for (let i = 0; i + 1 < args.length; i += 2) { x = args[i]; y = args[i + 1]; points.push({ x, y }) } break
+      case 'l': for (let i = 0; i + 1 < args.length; i += 2) { x += args[i]; y += args[i + 1]; points.push({ x, y }) } break
+      case 'H': for (const a of args) { x = a; points.push({ x, y }) } break
+      case 'h': for (const a of args) { x += a; points.push({ x, y }) } break
+      case 'V': for (const a of args) { y = a; points.push({ x, y }) } break
+      case 'v': for (const a of args) { y += a; points.push({ x, y }) } break
     }
   }
 
-  return points.length >= 2 ? points : null
+  if (points.length < 2) return null
+
+  const forwardD = points.slice(1).map(p => `L ${p.x},${p.y}`).join(' ')
+  const reverseD = [...points].reverse().slice(1).map(p => `L ${p.x},${p.y}`).join(' ')
+
+  return { start: points[0], end: points[points.length - 1], forwardD, reverseD, el }
 }
 
-function collectSegments(doc: Document): PathData[] {
-  const result: PathData[] = []
+// Parses paths that contain a single arc command (a/A), with an optional
+// leading M/m. Preserves the arc parameters so the curve survives the merge.
+// Reversing an arc means flipping the sweep-flag and negating relative offsets.
+function extractArcFrag(el: Element): PathFrag | null {
+  const d = el.getAttribute('d') ?? ''
+  if (!/[Aa]/.test(d)) return null
+  if (/[CcSsQqTtZz]/.test(d)) return null
+  if ((d.match(/[Mm]/g) ?? []).length !== 1) return null
+  if ((d.match(/[Aa]/g) ?? []).length !== 1) return null
+
+  const mMatch = d.match(/[Mm]\s*([-+\d.eE]+)[,\s]+([-+\d.eE]+)/)
+  if (!mMatch) return null
+  // First command → absolute start even for lowercase m (origin is 0,0)
+  const start: Point = { x: parseFloat(mMatch[1]), y: parseFloat(mMatch[2]) }
+
+  const arcMatch = d.match(/([Aa])\s*([-+\d.eE]+)[,\s]+([-+\d.eE]+)[,\s]+([-+\d.eE]+)[,\s]+([01])[,\s]+([01])[,\s]+([-+\d.eE]+)[,\s]+([-+\d.eE]+)/)
+  if (!arcMatch) return null
+
+  const isRel = arcMatch[1] === 'a'
+  const rx = parseFloat(arcMatch[2])
+  const ry = parseFloat(arcMatch[3])
+  const rot = parseFloat(arcMatch[4])
+  const laf = parseInt(arcMatch[5])
+  const sf = parseInt(arcMatch[6])
+  const p1 = parseFloat(arcMatch[7])
+  const p2 = parseFloat(arcMatch[8])
+
+  const end: Point = isRel
+    ? { x: start.x + p1, y: start.y + p2 }
+    : { x: p1, y: p2 }
+
+  const forwardD = `${isRel ? 'a' : 'A'} ${rx},${ry} ${rot} ${laf} ${sf} ${p1},${p2}`
+  const reverseD = isRel
+    ? `a ${rx},${ry} ${rot} ${laf} ${1 - sf} ${-p1},${-p2}`
+    : `A ${rx},${ry} ${rot} ${laf} ${1 - sf} ${start.x},${start.y}`
+
+  return { start, end, forwardD, reverseD, el }
+}
+
+function collectSegments(doc: Document): PathFrag[] {
+  const result: PathFrag[] = []
 
   for (const el of Array.from(doc.querySelectorAll('line'))) {
     const x1 = parseFloat(el.getAttribute('x1') ?? '0')
     const y1 = parseFloat(el.getAttribute('y1') ?? '0')
     const x2 = parseFloat(el.getAttribute('x2') ?? '0')
     const y2 = parseFloat(el.getAttribute('y2') ?? '0')
-    const points = [{ x: x1, y: y1 }, { x: x2, y: y2 }]
-    result.push({ start: points[0], end: points[1], points, el })
+    result.push({
+      start: { x: x1, y: y1 },
+      end: { x: x2, y: y2 },
+      forwardD: `L ${x2},${y2}`,
+      reverseD: `L ${x1},${y1}`,
+      el
+    })
   }
 
   for (const el of Array.from(doc.querySelectorAll('path'))) {
-    const pts = extractPoints(el.getAttribute('d') ?? '')
-    if (!pts) continue
-    result.push({ start: pts[0], end: pts[pts.length - 1], points: pts, el })
+    const linear = extractLinearFrag(el)
+    if (linear) { result.push(linear); continue }
+    const arc = extractArcFrag(el)
+    if (arc) result.push(arc)
   }
 
   return result
 }
 
-// Chains PathData entries by shared endpoints, concatenating full point arrays.
-// Connected segments (head-to-tail, tail-to-tail, head-to-head) are merged;
-// isolated segments become single-point chains.
-function chainSegments(segs: PathData[]): Point[][] {
-  const remaining = segs.map(s => ({ points: [...s.points] }))
-  const chains: Point[][] = []
+interface Chain {
+  start: Point
+  end: Point
+  parts: string[]
+}
+
+// Chains PathFrag entries by shared endpoints. Appends forwardD or reverseD
+// depending on which end connects to the current chain tip/head.
+function chainFrags(frags: PathFrag[]): Chain[] {
+  const remaining = [...frags]
+  const chains: Chain[] = []
 
   while (remaining.length > 0) {
     const first = remaining.splice(0, 1)[0]
-    const chain: Point[] = [...first.points]
+    const chain: Chain = {
+      start: first.start,
+      end: first.end,
+      parts: [first.forwardD]
+    }
 
     let extended = true
     while (extended) {
       extended = false
-      const tail = chain[chain.length - 1]
-      const head = chain[0]
-
       for (let i = 0; i < remaining.length; i++) {
-        const pts = remaining[i].points
-        const rHead = pts[0]
-        const rTail = pts[pts.length - 1]
+        const frag = remaining[i]
 
-        if (pointsEqual(rHead, tail)) {
-          // Tail of chain connects to head of this segment → append (skip shared point)
-          chain.push(...pts.slice(1))
+        if (pointsEqual(frag.start, chain.end)) {
+          chain.parts.push(frag.forwardD)
+          chain.end = frag.end
           remaining.splice(i, 1); extended = true; break
-        } else if (pointsEqual(rTail, tail)) {
-          // Tail of chain connects to tail of this segment → append reversed
-          chain.push(...[...pts].reverse().slice(1))
+        } else if (pointsEqual(frag.end, chain.end)) {
+          chain.parts.push(frag.reverseD)
+          chain.end = frag.start
           remaining.splice(i, 1); extended = true; break
-        } else if (pointsEqual(rTail, head)) {
-          // Head of chain connects to tail of this segment → prepend (skip shared point)
-          chain.unshift(...pts.slice(0, -1))
+        } else if (pointsEqual(frag.end, chain.start)) {
+          chain.parts.unshift(frag.forwardD)
+          chain.start = frag.start
           remaining.splice(i, 1); extended = true; break
-        } else if (pointsEqual(rHead, head)) {
-          // Head of chain connects to head of this segment → prepend reversed
-          chain.unshift(...[...pts].reverse().slice(0, -1))
+        } else if (pointsEqual(frag.start, chain.start)) {
+          chain.parts.unshift(frag.reverseD)
+          chain.start = frag.end
           remaining.splice(i, 1); extended = true; break
         }
       }
@@ -189,14 +213,11 @@ export const disconnectedLineRule: CheckRule = {
     const segments = collectSegments(doc)
     const violatingSet = new Set<Element>()
 
-    // <line> elements are always violations
     for (const seg of segments) {
       if (isLine(seg.el)) violatingSet.add(seg.el)
     }
 
-    // Paths that share an endpoint with another path of the same style
-    // can be joined and are therefore violations
-    const groups = new Map<string, PathData[]>()
+    const groups = new Map<string, PathFrag[]>()
     for (const seg of segments) {
       const key = styleKey(seg.el)
       if (!groups.has(key)) groups.set(key, [])
@@ -240,8 +261,7 @@ export const disconnectedLineRule: CheckRule = {
     const segments = collectSegments(doc)
     if (segments.length === 0) return
 
-    // Group by visual style so only same-style segments are merged
-    const groups = new Map<string, PathData[]>()
+    const groups = new Map<string, PathFrag[]>()
     for (const seg of segments) {
       const key = styleKey(seg.el)
       if (!groups.has(key)) groups.set(key, [])
@@ -249,12 +269,12 @@ export const disconnectedLineRule: CheckRule = {
     }
 
     for (const segs of groups.values()) {
-      const chains = chainSegments(segs)
+      const chains = chainFrags(segs)
       const refEl = segs[0].el
       const groupParent = refEl.parentNode!
       for (const chain of chains) {
         const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
-        path.setAttribute('d', chain.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' '))
+        path.setAttribute('d', `M ${chain.start.x},${chain.start.y} ${chain.parts.join(' ')}`)
         for (const attr of Array.from(refEl.attributes)) {
           if (!['x1', 'y1', 'x2', 'y2', 'id', 'd'].includes(attr.name)) {
             path.setAttribute(attr.name, attr.value)
