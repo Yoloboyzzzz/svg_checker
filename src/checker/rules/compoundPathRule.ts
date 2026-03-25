@@ -118,6 +118,7 @@ export const compoundPathRule: CheckRule = {
       weight: this.defaultWeight,
       pass: violations.length === 0,
       violationCount: violations.length,
+      totalChecked: paths.length,
       violations
     }
   },

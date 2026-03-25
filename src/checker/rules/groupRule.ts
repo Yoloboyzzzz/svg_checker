@@ -11,6 +11,7 @@ export const groupRule: CheckRule = {
 
   check(doc: Document): CheckResult {
     const groups = Array.from(doc.querySelectorAll('g')).filter(g => !isLayer(g))
+    const totalChecked = doc.querySelectorAll('path, line, rect, circle, ellipse, polyline, polygon, g').length
     const violations = groups.map((el, i) => ({
       elementIndex: i,
       elementId: el.getAttribute('id'),
@@ -22,6 +23,7 @@ export const groupRule: CheckRule = {
       weight: this.defaultWeight,
       pass: groups.length === 0,
       violationCount: groups.length,
+      totalChecked,
       violations
     }
   },

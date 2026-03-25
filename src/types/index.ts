@@ -12,6 +12,7 @@ export interface CheckResult {
   weight: number
   pass: boolean
   violationCount: number
+  totalChecked: number
   violations: ViolationDetail[]
 }
 

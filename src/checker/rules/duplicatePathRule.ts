@@ -45,6 +45,7 @@ export const duplicatePathRule: CheckRule = {
       weight: this.defaultWeight,
       pass: violations.length === 0,
       violationCount: dupIndices.size > 0 ? Math.floor(dupIndices.size / 2) : 0,
+      totalChecked: paths.length,
       violations
     }
   },

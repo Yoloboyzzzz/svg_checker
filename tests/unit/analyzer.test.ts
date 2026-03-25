@@ -16,11 +16,15 @@ describe('analyzer.analyze()', () => {
     expect(report.checks.every(c => c.pass)).toBe(true)
   })
 
-  it('returns score 0 for all-violations SVG', () => {
+  it('returns a reduced score when all checks fail', () => {
     const analyzer = createAnalyzer(DEFAULT_RULES)
     const report = analyzer.analyze(loadFixture('all-violations.svg'), 'all.svg', 100)
-    expect(report.score).toBe(0)
+    // Every rule must fail
     expect(report.checks.every(c => !c.pass)).toBe(true)
+    // Score is proportional: having only some elements violate still gives partial credit,
+    // but the overall score must be well below 100
+    expect(report.score).toBeLessThan(75)
+    expect(report.score).toBeGreaterThanOrEqual(0)
   })
 
   it('throws on malformed SVG', () => {

@@ -229,6 +229,7 @@ export const disconnectedLineRule: CheckRule = {
       weight: this.defaultWeight,
       pass: violations.length === 0,
       violationCount: violations.length,
+      totalChecked: segments.length,
       violations
     }
   },
