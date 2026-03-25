@@ -48,7 +48,19 @@ function styleKey(el: Element): string {
 }
 
 function isLine(el: Element): boolean {
-  return el.tagName.toLowerCase() === 'line'
+  return (el.localName ?? el.tagName).toLowerCase() === 'line'
+}
+
+// Paths inside <defs>, <marker>, <pattern>, or <symbol> are part of
+// definitions and must never be moved or merged.
+function isInDefs(el: Element): boolean {
+  let node: Element | null = el.parentElement
+  while (node) {
+    const tag = (node.localName ?? node.tagName).toLowerCase()
+    if (tag === 'defs' || tag === 'marker' || tag === 'pattern' || tag === 'symbol' || tag === 'clippath') return true
+    node = node.parentElement
+  }
+  return false
 }
 
 function parseNums(s: string): number[] {
@@ -131,6 +143,7 @@ function collectSegments(doc: Document): PathFrag[] {
   const result: PathFrag[] = []
 
   for (const el of Array.from(doc.querySelectorAll('line'))) {
+    if (isInDefs(el)) continue
     const x1 = parseFloat(el.getAttribute('x1') ?? '0')
     const y1 = parseFloat(el.getAttribute('y1') ?? '0')
     const x2 = parseFloat(el.getAttribute('x2') ?? '0')
@@ -145,6 +158,7 @@ function collectSegments(doc: Document): PathFrag[] {
   }
 
   for (const el of Array.from(doc.querySelectorAll('path'))) {
+    if (isInDefs(el)) continue
     const linear = extractLinearFrag(el)
     if (linear) { result.push(linear); continue }
     const arc = extractArcFrag(el)

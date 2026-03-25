@@ -1,5 +1,15 @@
 import type { CheckResult, CheckRule } from '../../types'
 
+function isInDefs(el: Element): boolean {
+  let node: Element | null = el.parentElement
+  while (node) {
+    const tag = (node.localName ?? node.tagName).toLowerCase()
+    if (tag === 'defs' || tag === 'marker' || tag === 'pattern' || tag === 'symbol' || tag === 'clippath') return true
+    node = node.parentElement
+  }
+  return false
+}
+
 function isCompound(d: string): boolean {
   return (d.match(/[Mm]/g) ?? []).length > 1
 }
@@ -104,7 +114,7 @@ export const compoundPathRule: CheckRule = {
   defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
-    const paths = Array.from(doc.querySelectorAll('path'))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p))
     const violations = paths
       .filter(p => isCompound(p.getAttribute('d') ?? ''))
       .map((el, i) => ({
@@ -124,7 +134,7 @@ export const compoundPathRule: CheckRule = {
   },
 
   fix(doc: Document): void {
-    const paths = Array.from(doc.querySelectorAll('path'))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p))
     for (const path of paths) {
       const d = path.getAttribute('d') ?? ''
       if (!isCompound(d)) continue

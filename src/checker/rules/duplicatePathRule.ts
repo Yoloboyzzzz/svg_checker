@@ -1,6 +1,16 @@
 import type { CheckResult, CheckRule } from '../../types'
 import { normalizeColor } from '../../utils/colorNormalize'
 
+function isInDefs(el: Element): boolean {
+  let node: Element | null = el.parentElement
+  while (node) {
+    const tag = (node.localName ?? node.tagName).toLowerCase()
+    if (tag === 'defs' || tag === 'marker' || tag === 'pattern' || tag === 'symbol' || tag === 'clippath') return true
+    node = node.parentElement
+  }
+  return false
+}
+
 function normalizePath(d: string): string {
   return d
     .trim()
@@ -21,7 +31,7 @@ export const duplicatePathRule: CheckRule = {
   defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
-    const paths = Array.from(doc.querySelectorAll('path'))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p))
     const seen = new Map<string, number>()
     const dupIndices = new Set<number>()
     paths.forEach((p, i) => {
@@ -52,7 +62,7 @@ export const duplicatePathRule: CheckRule = {
   },
 
   fix(doc: Document): void {
-    const paths = Array.from(doc.querySelectorAll('path'))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p))
     const seen = new Map<string, Element>()
     for (const p of paths) {
       const transform = p.getAttribute('transform') ?? ''
