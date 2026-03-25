@@ -48,7 +48,9 @@ function styleKey(el: Element): string {
     }
   }
 
-  return Object.entries(strokeProps).sort().map(([k, v]) => `${k}=${v}`).join(';')
+  // Include the transform so paths in different coordinate spaces are never merged
+  const transform = el.getAttribute('transform') ?? ''
+  return Object.entries(strokeProps).sort().map(([k, v]) => `${k}=${v}`).join(';') + '|transform=' + transform
 }
 
 function isLine(el: Element): boolean {
@@ -246,12 +248,10 @@ export const disconnectedLineRule: CheckRule = {
       groups.get(key)!.push(seg)
     }
 
-    const insertionRef = segments[0].el
-    const parent = insertionRef.parentNode!
-
     for (const segs of groups.values()) {
       const chains = chainSegments(segs)
       const refEl = segs[0].el
+      const groupParent = refEl.parentNode!
       for (const chain of chains) {
         const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
         path.setAttribute('d', chain.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' '))
@@ -260,7 +260,7 @@ export const disconnectedLineRule: CheckRule = {
             path.setAttribute(attr.name, attr.value)
           }
         }
-        parent.insertBefore(path, insertionRef)
+        groupParent.insertBefore(path, refEl)
       }
     }
 

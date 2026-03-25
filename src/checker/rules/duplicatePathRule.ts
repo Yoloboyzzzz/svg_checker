@@ -25,7 +25,8 @@ export const duplicatePathRule: CheckRule = {
     const seen = new Map<string, number>()
     const dupIndices = new Set<number>()
     paths.forEach((p, i) => {
-      const key = normalizePath(p.getAttribute('d') ?? '') + '|' + getStrokeKey(p)
+      const transform = p.getAttribute('transform') ?? ''
+      const key = normalizePath(p.getAttribute('d') ?? '') + '|' + getStrokeKey(p) + '|' + transform
       if (seen.has(key)) {
         dupIndices.add(i)
         const firstIdx = seen.get(key)!
@@ -54,7 +55,8 @@ export const duplicatePathRule: CheckRule = {
     const paths = Array.from(doc.querySelectorAll('path'))
     const seen = new Map<string, Element>()
     for (const p of paths) {
-      const key = normalizePath(p.getAttribute('d') ?? '') + '|' + getStrokeKey(p)
+      const transform = p.getAttribute('transform') ?? ''
+      const key = normalizePath(p.getAttribute('d') ?? '') + '|' + getStrokeKey(p) + '|' + transform
       if (seen.has(key)) {
         p.parentNode?.removeChild(p)
       } else {
