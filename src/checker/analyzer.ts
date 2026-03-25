@@ -9,8 +9,9 @@ export function createAnalyzer(rules: CheckRule[]): SVGAnalyzer {
       const score = Math.round(
         checks.reduce((sum, c) => {
           if (c.totalChecked === 0) return sum + c.weight
+          if (c.violationCount > 15) return sum
           const quality = Math.max(0, 1 - c.violationCount / c.totalChecked)
-          return sum + c.weight * quality
+          return sum + c.weight * Math.pow(quality, 3)
         }, 0) * 100
       )
       return { filename, fileSize, score, checks }
