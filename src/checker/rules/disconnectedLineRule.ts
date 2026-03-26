@@ -52,6 +52,22 @@ function isLine(el: Element): boolean {
   return (el.localName ?? el.tagName).toLowerCase() === 'line'
 }
 
+// Returns true if the element has a non-none fill — filled shapes should not be
+// broken apart, deduplicated, or joined (they are area fills, not cut lines).
+function hasFill(el: Element): boolean {
+  const style = el.getAttribute('style') ?? ''
+  for (const decl of style.split(';')) {
+    const colon = decl.indexOf(':')
+    if (colon === -1) continue
+    if (decl.slice(0, colon).trim() === 'fill') {
+      const val = decl.slice(colon + 1).trim()
+      return val !== 'none' && val !== ''
+    }
+  }
+  const fill = el.getAttribute('fill')
+  return fill !== null && fill !== 'none'
+}
+
 // Paths inside <defs>, <marker>, <pattern>, or <symbol> are part of
 // definitions and must never be moved or merged.
 function isInDefs(el: Element): boolean {
@@ -182,6 +198,7 @@ function collectSegments(doc: Document): PathFrag[] {
 
   for (const el of Array.from(doc.querySelectorAll('path'))) {
     if (isInDefs(el)) continue
+    if (hasFill(el)) continue
     const linears = extractLinearFrags(el)
     if (linears.length > 0) { result.push(...linears); continue }
     const arc = extractArcFrag(el)
@@ -300,6 +317,7 @@ export const disconnectedLineRule: CheckRule = {
     // that were split out of compound paths and would cause unwanted laser pierce points.
     for (const el of Array.from(doc.querySelectorAll('path'))) {
       if (isInDefs(el)) continue
+      if (hasFill(el)) continue
       const d = el.getAttribute('d') ?? ''
       if (/[LlHhVvAaZz]/.test(d)) continue           // has real geometry — keep
       if (!/[CcSsQqTt]/.test(d)) continue             // no curve commands — skip

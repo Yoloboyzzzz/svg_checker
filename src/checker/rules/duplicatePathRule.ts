@@ -10,6 +10,20 @@ function isInDefs(el: Element): boolean {
   return false
 }
 
+function hasFill(el: Element): boolean {
+  const style = el.getAttribute('style') ?? ''
+  for (const decl of style.split(';')) {
+    const colon = decl.indexOf(':')
+    if (colon === -1) continue
+    if (decl.slice(0, colon).trim() === 'fill') {
+      const val = decl.slice(colon + 1).trim()
+      return val !== 'none' && val !== ''
+    }
+  }
+  const fill = el.getAttribute('fill')
+  return fill !== null && fill !== 'none'
+}
+
 function normalizePath(d: string): string {
   return d
     .trim()
@@ -42,7 +56,7 @@ export const duplicatePathRule: CheckRule = {
   defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
-    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !hasFill(p))
     const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l))
 
     const seen = new Map<string, number>()
@@ -76,7 +90,7 @@ export const duplicatePathRule: CheckRule = {
   },
 
   fix(doc: Document): void {
-    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !hasFill(p))
     const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l))
     const seen = new Map<string, Element>()
 
