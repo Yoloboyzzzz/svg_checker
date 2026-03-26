@@ -12,9 +12,9 @@ interface PathFrag {
   el: Element
 }
 
-// Tight tolerance: absorbs floating-point rounding from vector editors (< 0.01 units)
+// Join tolerance: absorbs floating-point rounding from vector editors (< 0.1 units)
 // while preventing false-positive joins across intended gaps
-const EPS = 0.01
+const EPS = 0.2
 
 function pointsEqual(a: Point, b: Point): boolean {
   return Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS
@@ -68,16 +68,18 @@ function parseNums(s: string): number[] {
   return (s.match(/[-+]?(?:\d*\.?\d+)(?:[eE][-+]?\d+)?/g) ?? []).map(Number)
 }
 
-// Parses straight-line paths (M/m/L/l/H/h/V/v only) into a point array.
+// Parses straight-line paths (M/m/L/l/H/h/V/v/Z/z only) into a point array.
+// Z/z closes the subpath by appending the start point, exposing the closing segment
+// to deduplication so shared edges between adjacent closed shapes are removed.
 function parseLinearPoints(el: Element): Point[] | null {
   const d = el.getAttribute('d') ?? ''
-  if (/[CcSsQqTtAaZz]/.test(d)) return null
+  if (/[CcSsQqTtAa]/.test(d)) return null
   if ((d.match(/[Mm]/g) ?? []).length > 1) return null
 
   const points: Point[] = []
   let x = 0, y = 0
 
-  for (const token of d.trim().split(/(?=[MmLlHhVv])/)) {
+  for (const token of d.trim().split(/(?=[MmLlHhVvZz])/)) {
     if (!token.trim()) continue
     const cmd = token[0]
     const args = parseNums(token.slice(1))
@@ -90,6 +92,7 @@ function parseLinearPoints(el: Element): Point[] | null {
       case 'h': for (const a of args) { x += a; points.push({ x, y }) } break
       case 'V': for (const a of args) { y = a; points.push({ x, y }) } break
       case 'v': for (const a of args) { y += a; points.push({ x, y }) } break
+      case 'Z': case 'z': if (points.length > 0) points.push({ ...points[0] }); break
     }
   }
 
@@ -292,6 +295,22 @@ export const disconnectedLineRule: CheckRule = {
   },
 
   fix(doc: Document): void {
+    // Remove tiny curve stubs (dimension tick marks < 1 SVG unit end-to-end).
+    // These are single-subpath paths with only curve commands (c/C/s/S/q/Q/t/T)
+    // that were split out of compound paths and would cause unwanted laser pierce points.
+    for (const el of Array.from(doc.querySelectorAll('path'))) {
+      if (isInDefs(el)) continue
+      const d = el.getAttribute('d') ?? ''
+      if (/[LlHhVvAaZz]/.test(d)) continue           // has real geometry — keep
+      if (!/[CcSsQqTt]/.test(d)) continue             // no curve commands — skip
+      if ((d.match(/[Mm]/g) ?? []).length !== 1) continue  // multi-subpath — keep
+      // Compute endpoint offset from the last pair of numbers in the d string
+      const nums = (d.match(/[-+]?(?:\d*\.?\d+)(?:[eE][+-]?\d+)?/g) ?? []).map(Number)
+      if (nums.length < 2) continue
+      const dx = nums[nums.length - 2], dy = nums[nums.length - 1]
+      if (Math.sqrt(dx * dx + dy * dy) < 1.0) el.parentNode?.removeChild(el)
+    }
+
     const segments = collectSegments(doc)
     if (segments.length === 0) return
 

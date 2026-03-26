@@ -15,7 +15,7 @@ function normalizePath(d: string): string {
     .trim()
     .replace(/\s+/g, ' ')
     .replace(/,\s*/g, ',')
-    .replace(/(-?\d+\.?\d*(?:[eE][+-]?\d+)?)/g, m => parseFloat(m).toFixed(2))
+    .replace(/(-?\d+\.?\d*(?:[eE][+-]?\d+)?)/g, m => parseFloat(m).toFixed(1))
 }
 
 // Geometry-only key for <path> elements — stroke/fill excluded per spec clarification
@@ -26,7 +26,7 @@ function pathKey(el: Element): string {
 
 // Geometry-only key for <line> elements — endpoints sorted so reversed copies match
 function lineKey(el: Element): string {
-  const round = (n: number) => Math.round(n * 100) / 100
+  const round = (n: number) => Math.round(n * 10) / 10
   const x1 = round(parseFloat(el.getAttribute('x1') ?? '0'))
   const y1 = round(parseFloat(el.getAttribute('y1') ?? '0'))
   const x2 = round(parseFloat(el.getAttribute('x2') ?? '0'))
