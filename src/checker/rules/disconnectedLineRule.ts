@@ -54,6 +54,7 @@ function isLine(el: Element): boolean {
 
 // Returns true if the element has a non-none fill — filled shapes should not be
 // broken apart, deduplicated, or joined (they are area fills, not cut lines).
+// Closed paths (z) with no explicit fill:none use the SVG default fill (black).
 function hasFill(el: Element): boolean {
   const style = el.getAttribute('style') ?? ''
   for (const decl of style.split(';')) {
@@ -61,11 +62,36 @@ function hasFill(el: Element): boolean {
     if (colon === -1) continue
     if (decl.slice(0, colon).trim() === 'fill') {
       const val = decl.slice(colon + 1).trim()
-      return val !== 'none' && val !== ''
+      if (val === 'none') return false
+      return val !== ''
     }
   }
   const fill = el.getAttribute('fill')
-  return fill !== null && fill !== 'none'
+  if (fill !== null) return fill !== 'none'
+  // No explicit fill set: SVG default is black.
+  // Closed paths (z) without fill:none are filled shapes — protect them.
+  return /[Zz]/.test(el.getAttribute('d') ?? '')
+}
+
+// Returns true if the element renders in black (fill or stroke is black).
+// Black elements are excluded from all processing except ungrouping.
+function isBlackColor(val: string): boolean {
+  const v = val.trim().toLowerCase()
+  return v === 'black' || v === '#000' || v === '#000000' ||
+    /^rgb\(\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(v)
+}
+
+function isBlack(el: Element): boolean {
+  const styleProps: Record<string, string> = {}
+  const styleAttr = el.getAttribute('style') ?? ''
+  for (const decl of styleAttr.split(';')) {
+    const colon = decl.indexOf(':')
+    if (colon === -1) continue
+    styleProps[decl.slice(0, colon).trim()] = decl.slice(colon + 1).trim()
+  }
+  const fillVal = styleProps['fill'] ?? el.getAttribute('fill') ?? ''
+  const strokeVal = styleProps['stroke'] ?? el.getAttribute('stroke') ?? ''
+  return isBlackColor(fillVal) || isBlackColor(strokeVal)
 }
 
 // Paths inside <defs>, <marker>, <pattern>, or <symbol> are part of
@@ -183,6 +209,7 @@ function collectSegments(doc: Document): PathFrag[] {
 
   for (const el of Array.from(doc.querySelectorAll('line'))) {
     if (isInDefs(el)) continue
+    if (isBlack(el)) continue
     const x1 = parseFloat(el.getAttribute('x1') ?? '0')
     const y1 = parseFloat(el.getAttribute('y1') ?? '0')
     const x2 = parseFloat(el.getAttribute('x2') ?? '0')
@@ -198,7 +225,7 @@ function collectSegments(doc: Document): PathFrag[] {
 
   for (const el of Array.from(doc.querySelectorAll('path'))) {
     if (isInDefs(el)) continue
-    if (hasFill(el)) continue
+    if (hasFill(el) || isBlack(el)) continue
     const linears = extractLinearFrags(el)
     if (linears.length > 0) { result.push(...linears); continue }
     const arc = extractArcFrag(el)
@@ -317,7 +344,7 @@ export const disconnectedLineRule: CheckRule = {
     // that were split out of compound paths and would cause unwanted laser pierce points.
     for (const el of Array.from(doc.querySelectorAll('path'))) {
       if (isInDefs(el)) continue
-      if (hasFill(el)) continue
+      if (hasFill(el) || isBlack(el)) continue
       const d = el.getAttribute('d') ?? ''
       if (/[LlHhVvAaZz]/.test(d)) continue           // has real geometry — keep
       if (!/[CcSsQqTt]/.test(d)) continue             // no curve commands — skip

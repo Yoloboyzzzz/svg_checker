@@ -17,11 +17,34 @@ function hasFill(el: Element): boolean {
     if (colon === -1) continue
     if (decl.slice(0, colon).trim() === 'fill') {
       const val = decl.slice(colon + 1).trim()
-      return val !== 'none' && val !== ''
+      if (val === 'none') return false
+      return val !== ''
     }
   }
   const fill = el.getAttribute('fill')
-  return fill !== null && fill !== 'none'
+  if (fill !== null) return fill !== 'none'
+  // No explicit fill set: SVG default is black.
+  // Closed paths (z) without fill:none are filled shapes — protect them.
+  return /[Zz]/.test(el.getAttribute('d') ?? '')
+}
+
+function isBlackColor(val: string): boolean {
+  const v = val.trim().toLowerCase()
+  return v === 'black' || v === '#000' || v === '#000000' ||
+    /^rgb\(\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(v)
+}
+
+function isBlack(el: Element): boolean {
+  const styleProps: Record<string, string> = {}
+  const styleAttr = el.getAttribute('style') ?? ''
+  for (const decl of styleAttr.split(';')) {
+    const colon = decl.indexOf(':')
+    if (colon === -1) continue
+    styleProps[decl.slice(0, colon).trim()] = decl.slice(colon + 1).trim()
+  }
+  const fillVal = styleProps['fill'] ?? el.getAttribute('fill') ?? ''
+  const strokeVal = styleProps['stroke'] ?? el.getAttribute('stroke') ?? ''
+  return isBlackColor(fillVal) || isBlackColor(strokeVal)
 }
 
 function normalizePath(d: string): string {
@@ -56,8 +79,8 @@ export const duplicatePathRule: CheckRule = {
   defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
-    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !hasFill(p))
-    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !hasFill(p) && !isBlack(p))
+    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l) && !isBlack(l))
 
     const seen = new Map<string, number>()
     const dupIndices = new Set<number>()
@@ -90,8 +113,8 @@ export const duplicatePathRule: CheckRule = {
   },
 
   fix(doc: Document): void {
-    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !hasFill(p))
-    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !hasFill(p) && !isBlack(p))
+    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l) && !isBlack(l))
     const seen = new Map<string, Element>()
 
     for (const el of [...paths, ...lines]) {

@@ -46,7 +46,9 @@
       "Bash(for id:*)",
       "Bash(do echo:*)",
       "Bash(grep -o \"id=\"\"$id\"\"[^>]*d=\"\"[^\"\"]*\"\"\" \"C:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\ink3remake-fixed \\(6\\).svg\")",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(grep -l \"stroke\" c:/Users/FabLab_Leuven/Documents/svg_checker/tests/fixtures/*.svg)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

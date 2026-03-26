@@ -1,3 +1,3 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
-  <path id="compound" d="M10,10 L50,10 M60,60 L90,90" stroke="#000000" fill="none"/>
+  <path id="compound" d="M10,10 L50,10 M60,60 L90,90" stroke="#ff0000" fill="none"/>
 </svg>
