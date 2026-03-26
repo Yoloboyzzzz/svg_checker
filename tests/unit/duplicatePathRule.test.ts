@@ -47,4 +47,32 @@ describe('duplicatePathRule.fix()', () => {
     const result = duplicatePathRule.check(doc)
     expect(result.pass).toBe(true)
   })
+
+  it('treats paths with different strokes but same geometry as duplicates', async () => {
+    const { duplicatePathRule } = await import('../../src/checker/rules/duplicatePathRule')
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path d="M 0,0 L 50,50" stroke="#ff0000"/>
+      <path d="M 0,0 L 50,50" stroke="#0000ff"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    expect(duplicatePathRule.check(doc).pass).toBe(false)
+    duplicatePathRule.fix(doc)
+    expect(doc.querySelectorAll('path').length).toBe(1)
+  })
+
+  it('detects two identical <line> elements as duplicates', async () => {
+    const { duplicatePathRule } = await import('../../src/checker/rules/duplicatePathRule')
+    const doc = new DOMParser().parseFromString(loadFixture('with-duplicate-lines.svg'), 'image/svg+xml')
+    expect(duplicatePathRule.check(doc).pass).toBe(false)
+    duplicatePathRule.fix(doc)
+    expect(doc.querySelectorAll('line').length).toBe(1)
+  })
+
+  it('detects a reversed duplicate <line> element as a duplicate', async () => {
+    const { duplicatePathRule } = await import('../../src/checker/rules/duplicatePathRule')
+    const doc = new DOMParser().parseFromString(loadFixture('with-reversed-duplicate-line.svg'), 'image/svg+xml')
+    expect(duplicatePathRule.check(doc).pass).toBe(false)
+    duplicatePathRule.fix(doc)
+    expect(doc.querySelectorAll('line').length).toBe(1)
+  })
 })

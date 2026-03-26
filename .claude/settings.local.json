@@ -30,7 +30,23 @@
       "Bash(where powershell.exe)",
       "Bash(powershell.exe -Command '$PSVersionTable.PSVersion')",
       "Bash(powershell.exe -Command \".specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly\")",
-      "Bash(powershell.exe -Command \".specify/scripts/powershell/setup-plan.ps1 -Json\")"
+      "Bash(powershell.exe -Command \".specify/scripts/powershell/setup-plan.ps1 -Json\")",
+      "Bash(powershell -Command \"./.specify/scripts/powershell/create-new-feature.ps1 ''The software still joines nodes incorrectly an it does not correctly remove lines that are on top of eachother.'' -Json -ShortName ''fix-join-dedup'' ''Fix incorrect node joining and duplicate line removal''\")",
+      "Bash(powershell -Command \"$PSVersionTable.PSVersion\")",
+      "Bash(pwsh -Command '$PSVersionTable.PSVersion')",
+      "Bash(powershell.exe -Version 5 -Command \"Write-Host $PSVersionTable.PSVersion.Major\")",
+      "Bash(powershell.exe -Command \"Write-Host \\($PSVersionTable.PSVersion.Major\\)\")",
+      "Bash(powershell.exe -NoProfile -Command \"Write-Host \\(''PS Version: '' + $PSVersionTable.PSVersion.ToString\\(\\)\\)\")",
+      "Bash(powershell.exe -NoProfile -Command 'Write-Host $PSVersionTable.PSVersion')",
+      "Bash(powershell.exe -NoProfile -Command \"./.specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly\")",
+      "Bash(powershell.exe -NoProfile -Command \"./.specify/scripts/powershell/setup-plan.ps1 -Json\")",
+      "Bash(wc -l \"ink3remake-fixed \\(5\\).svg\")",
+      "Bash(head -5 \"ink3remake-fixed \\(5\\).svg\")",
+      "Bash(wc -l \"C:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\ink3remake-fixed \\(6\\).svg\")",
+      "Bash(for id:*)",
+      "Bash(do echo:*)",
+      "Bash(grep -o \"id=\"\"$id\"\"[^>]*d=\"\"[^\"\"]*\"\"\" \"C:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\ink3remake-fixed \\(6\\).svg\")",
+      "Bash(done)"
     ]
   }
 }

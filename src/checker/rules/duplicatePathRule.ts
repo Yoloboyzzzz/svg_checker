@@ -1,5 +1,4 @@
 import type { CheckResult, CheckRule } from '../../types'
-import { normalizeColor } from '../../utils/colorNormalize'
 
 function isInDefs(el: Element): boolean {
   let node: Element | null = el.parentElement
@@ -16,13 +15,25 @@ function normalizePath(d: string): string {
     .trim()
     .replace(/\s+/g, ' ')
     .replace(/,\s*/g, ',')
-    .replace(/(-?\d+\.\d{5,})/g, m => parseFloat(m).toFixed(4))
+    .replace(/(-?\d+\.?\d*(?:[eE][+-]?\d+)?)/g, m => parseFloat(m).toFixed(2))
 }
 
-function getStrokeKey(el: Element): string {
-  const stroke = el.getAttribute('stroke') ?? 'none'
-  if (stroke === 'none' || stroke === '') return 'none'
-  try { return normalizeColor(stroke) } catch { return stroke }
+// Geometry-only key for <path> elements — stroke/fill excluded per spec clarification
+function pathKey(el: Element): string {
+  const transform = el.getAttribute('transform') ?? ''
+  return normalizePath(el.getAttribute('d') ?? '') + '|transform=' + transform
+}
+
+// Geometry-only key for <line> elements — endpoints sorted so reversed copies match
+function lineKey(el: Element): string {
+  const round = (n: number) => Math.round(n * 100) / 100
+  const x1 = round(parseFloat(el.getAttribute('x1') ?? '0'))
+  const y1 = round(parseFloat(el.getAttribute('y1') ?? '0'))
+  const x2 = round(parseFloat(el.getAttribute('x2') ?? '0'))
+  const y2 = round(parseFloat(el.getAttribute('y2') ?? '0'))
+  const transform = el.getAttribute('transform') ?? ''
+  const endpoints = [`${x1},${y1}`, `${x2},${y2}`].sort()
+  return 'line|' + endpoints.join('|') + '|transform=' + transform
 }
 
 export const duplicatePathRule: CheckRule = {
@@ -32,23 +43,26 @@ export const duplicatePathRule: CheckRule = {
 
   check(doc: Document): CheckResult {
     const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p))
+    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l))
+
     const seen = new Map<string, number>()
     const dupIndices = new Set<number>()
-    paths.forEach((p, i) => {
-      const transform = p.getAttribute('transform') ?? ''
-      const key = normalizePath(p.getAttribute('d') ?? '') + '|' + getStrokeKey(p) + '|' + transform
+    const allElements: Element[] = [...paths, ...lines]
+
+    allElements.forEach((el, i) => {
+      const key = (el.localName ?? el.tagName).toLowerCase() === 'line' ? lineKey(el) : pathKey(el)
       if (seen.has(key)) {
         dupIndices.add(i)
-        const firstIdx = seen.get(key)!
-        dupIndices.add(firstIdx)
+        dupIndices.add(seen.get(key)!)
       } else {
         seen.set(key, i)
       }
     })
+
     const violations = Array.from(dupIndices).map(i => ({
       elementIndex: i,
-      elementId: paths[i].getAttribute('id'),
-      description: `Duplicate path${paths[i].getAttribute('id') ? ` id="${paths[i].getAttribute('id')}"` : ''}`
+      elementId: allElements[i].getAttribute('id'),
+      description: `Duplicate path${allElements[i].getAttribute('id') ? ` id="${allElements[i].getAttribute('id')}"` : ''}`
     }))
     return {
       category: 'duplicate-paths',
@@ -56,21 +70,22 @@ export const duplicatePathRule: CheckRule = {
       weight: this.defaultWeight,
       pass: violations.length === 0,
       violationCount: dupIndices.size > 0 ? Math.floor(dupIndices.size / 2) : 0,
-      totalChecked: paths.length,
+      totalChecked: allElements.length,
       violations
     }
   },
 
   fix(doc: Document): void {
     const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p))
+    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l))
     const seen = new Map<string, Element>()
-    for (const p of paths) {
-      const transform = p.getAttribute('transform') ?? ''
-      const key = normalizePath(p.getAttribute('d') ?? '') + '|' + getStrokeKey(p) + '|' + transform
+
+    for (const el of [...paths, ...lines]) {
+      const key = (el.localName ?? el.tagName).toLowerCase() === 'line' ? lineKey(el) : pathKey(el)
       if (seen.has(key)) {
-        p.parentNode?.removeChild(p)
+        el.parentNode?.removeChild(el)
       } else {
-        seen.set(key, p)
+        seen.set(key, el)
       }
     }
   }

@@ -12,8 +12,9 @@ interface PathFrag {
   el: Element
 }
 
-// Generous tolerance to accommodate CAD floating-point coordinates
-const EPS = 0.5
+// Tight tolerance: absorbs floating-point rounding from vector editors (< 0.01 units)
+// while preventing false-positive joins across intended gaps
+const EPS = 0.01
 
 function pointsEqual(a: Point, b: Point): boolean {
   return Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS
@@ -67,8 +68,8 @@ function parseNums(s: string): number[] {
   return (s.match(/[-+]?(?:\d*\.?\d+)(?:[eE][-+]?\d+)?/g) ?? []).map(Number)
 }
 
-// Parses straight-line paths (M/m/L/l/H/h/V/v only).
-function extractLinearFrag(el: Element): PathFrag | null {
+// Parses straight-line paths (M/m/L/l/H/h/V/v only) into a point array.
+function parseLinearPoints(el: Element): Point[] | null {
   const d = el.getAttribute('d') ?? ''
   if (/[CcSsQqTtAaZz]/.test(d)) return null
   if ((d.match(/[Mm]/g) ?? []).length > 1) return null
@@ -92,12 +93,31 @@ function extractLinearFrag(el: Element): PathFrag | null {
     }
   }
 
-  if (points.length < 2) return null
+  return points.length >= 2 ? points : null
+}
 
-  const forwardD = points.slice(1).map(p => `L ${p.x},${p.y}`).join(' ')
-  const reverseD = [...points].reverse().slice(1).map(p => `L ${p.x},${p.y}`).join(' ')
+// Explodes a multi-point linear path into one PathFrag per adjacent point pair.
+// This prevents back-tracking: reversed duplicates are removed by deduplicateFragsInGroup.
+function extractLinearFrags(el: Element): PathFrag[] {
+  const points = parseLinearPoints(el)
+  if (!points) return []
+  return points.slice(0, -1).map((a, i) => {
+    const b = points[i + 1]
+    return { start: a, end: b, forwardD: `L ${b.x},${b.y}`, reverseD: `L ${a.x},${a.y}`, el }
+  })
+}
 
-  return { start: points[0], end: points[points.length - 1], forwardD, reverseD, el }
+// Removes frags whose geometry duplicates (or reverses) a frag already in the result.
+function deduplicateFragsInGroup(segs: PathFrag[]): PathFrag[] {
+  const result: PathFrag[] = []
+  for (const frag of segs) {
+    const isDup = result.some(k =>
+      (pointsEqual(k.start, frag.end) && pointsEqual(k.end, frag.start)) ||
+      (pointsEqual(k.start, frag.start) && pointsEqual(k.end, frag.end))
+    )
+    if (!isDup) result.push(frag)
+  }
+  return result
 }
 
 // Parses paths that contain a single arc command (a/A), with an optional
@@ -159,8 +179,8 @@ function collectSegments(doc: Document): PathFrag[] {
 
   for (const el of Array.from(doc.querySelectorAll('path'))) {
     if (isInDefs(el)) continue
-    const linear = extractLinearFrag(el)
-    if (linear) { result.push(linear); continue }
+    const linears = extractLinearFrags(el)
+    if (linears.length > 0) { result.push(...linears); continue }
     const arc = extractArcFrag(el)
     if (arc) result.push(arc)
   }
@@ -241,7 +261,7 @@ export const disconnectedLineRule: CheckRule = {
     for (const segs of groups.values()) {
       for (let i = 0; i < segs.length; i++) {
         for (let j = i + 1; j < segs.length; j++) {
-          if (sharesEndpoint(segs[i], segs[j])) {
+          if (sharesEndpoint(segs[i], segs[j]) && segs[i].el !== segs[j].el) {
             violatingSet.add(segs[i].el)
             violatingSet.add(segs[j].el)
           }
@@ -283,7 +303,7 @@ export const disconnectedLineRule: CheckRule = {
     }
 
     for (const segs of groups.values()) {
-      const chains = chainFrags(segs)
+      const chains = chainFrags(deduplicateFragsInGroup(segs))
       const refEl = segs[0].el
       const groupParent = refEl.parentNode!
       for (const chain of chains) {

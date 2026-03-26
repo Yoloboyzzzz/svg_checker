@@ -1,6 +1,6 @@
 # SVG Checker — Development Guidelines
 
-Auto-generated from feature plan. Last updated: 2026-03-24
+Auto-generated from feature plan. Last updated: 2026-03-26
 
 ## Active Technologies
 
@@ -53,6 +53,12 @@ npm run preview      # Preview prod build
 2. Add it to the `DEFAULT_RULES` array in `src/checker/rules/index.ts`
 3. Write unit tests in `tests/unit/myRule.test.ts` with positive + negative SVG fixtures
 4. No changes needed in `analyzer.ts` or `fixer.ts`
+
+## Known Bug-Fix Constants (003-fix-join-dedup)
+
+- `EPS` in `disconnectedLineRule.ts` controls join tolerance — must be `0.01`, NOT `0.5`
+- Dedup key in `duplicatePathRule.ts` is geometry-only (`normalizePath(d) + '|' + transform`); stroke is excluded
+- `duplicatePathRule` must handle both `<path>` AND `<line>` elements
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

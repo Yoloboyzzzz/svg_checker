@@ -180,4 +180,44 @@ describe('disconnectedLineRule.fix()', () => {
     disconnectedLineRule.fix(doc)
     expect(disconnectedLineRule.check(doc).pass).toBe(true)
   })
+
+  it('does NOT join paths whose endpoints are 0.4 units apart (no false-positive join)', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    const doc = new DOMParser().parseFromString(loadFixture('paths-far-apart.svg'), 'image/svg+xml')
+    disconnectedLineRule.fix(doc)
+    expect(doc.querySelectorAll('path').length).toBe(2)
+  })
+
+  it('joins paths whose endpoints are 0.009 units apart (within tolerance)', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    const doc = new DOMParser().parseFromString(loadFixture('paths-near-coincident.svg'), 'image/svg+xml')
+    disconnectedLineRule.fix(doc)
+    expect(doc.querySelectorAll('path').length).toBe(1)
+  })
+
+  it('removes back-tracking segments (explode → dedup → reconnect)', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    // Path goes A→B→C→D→C: the D→C segment is the reverse of C→D and must be removed
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path style="stroke:#000" d="M 0,0 L 10,0 L 10,10 L 0,10 L 10,10"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    disconnectedLineRule.fix(doc)
+    const paths = doc.querySelectorAll('path')
+    expect(paths.length).toBe(1)
+    const d = paths[0].getAttribute('d')!
+    // (10,10) should appear only once — no back-tracking
+    expect((d.match(/10,10/g) ?? []).length).toBe(1)
+  })
+
+  it('does not flag adjacent segments within the same path as joinable violations', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    // A single multi-point path: all adjacent pairs share endpoints, but it is NOT a violation
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path style="stroke:#000" d="M 0,0 L 10,0 L 10,10 L 0,10"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    const result = disconnectedLineRule.check(doc)
+    expect(result.pass).toBe(true)
+  })
 })
