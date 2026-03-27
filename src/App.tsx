@@ -5,10 +5,12 @@ import { DEFAULT_RULES } from './checker/rules'
 import { createAnalyzer } from './checker/analyzer'
 import { createFixer } from './checker/fixer'
 import { downloadSVG } from './utils/download'
+import { loadPdf, pageToSvg } from './utils/pdfToSvg'
 import { DropZone } from './components/DropZone'
 import { QualityScore } from './components/QualityScore'
 import { SVGPreview } from './components/SVGPreview'
 import { CheckCard } from './components/CheckCard'
+import { PdfPagePicker } from './components/PdfPagePicker'
 
 const analyzer = createAnalyzer(DEFAULT_RULES)
 const fixer = createFixer(DEFAULT_RULES, analyzer)
@@ -32,6 +34,36 @@ export default function App() {
       })
     } catch (e) {
       setState({ status: 'error', message: (e as Error).message })
+    }
+  }
+
+  const handlePdf = async (file: File) => {
+    setState({ status: 'loading' })
+    try {
+      const pdf = await loadPdf(file)
+      if (pdf.numPages === 1) {
+        // Skip picker for single-page PDFs
+        await handlePagePick(pdf, file.name, 1)
+      } else {
+        setState({ status: 'pdf-picking', pdf, filename: file.name })
+      }
+    } catch (e) {
+      setState({ status: 'error', message: `Failed to load PDF: ${(e as Error).message}` })
+    }
+  }
+
+  const handlePagePick = async (
+    pdf: import('./utils/pdfToSvg').PDFDocumentProxy,
+    filename: string,
+    pageNum: number
+  ) => {
+    setState({ status: 'loading' })
+    try {
+      const svgString = await pageToSvg(pdf, pageNum)
+      const svgFilename = filename.replace(/\.pdf$/i, '') + `-p${pageNum}.svg`
+      handleFile(svgString, svgFilename, new Blob([svgString]).size)
+    } catch (e) {
+      setState({ status: 'error', message: `Failed to convert page ${pageNum}: ${(e as Error).message}` })
     }
   }
 
@@ -60,9 +92,13 @@ export default function App() {
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-4xl mx-auto">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">SVG Checker</h1>
-        <p className="text-gray-500 mb-8">Upload an SVG to check for groups, compound paths, and duplicate paths.</p>
+        <p className="text-gray-500 mb-8">Upload an SVG or PDF to check for groups, compound paths, and duplicate paths.</p>
 
-        <DropZone onFile={handleFile} onError={(msg) => setState({ status: 'error', message: msg })} />
+        <DropZone
+          onFile={handleFile}
+          onPdf={handlePdf}
+          onError={(msg) => setState({ status: 'error', message: msg })}
+        />
 
         {state.status === 'loading' && (
           <div className="mt-8 flex items-center justify-center gap-3 text-gray-500">
@@ -75,6 +111,15 @@ export default function App() {
           <div className="mt-8 rounded-xl bg-red-50 border border-red-200 p-4 text-red-700">
             {state.message}
           </div>
+        )}
+
+        {state.status === 'pdf-picking' && (
+          <PdfPagePicker
+            pdf={state.pdf}
+            filename={state.filename}
+            onPickPage={(pageNum) => handlePagePick(state.pdf, state.filename, pageNum)}
+            onCancel={() => setState({ status: 'idle' })}
+          />
         )}
 
         {(state.status === 'analyzed' || state.status === 'fixed') && (

@@ -48,7 +48,9 @@
       "Bash(grep -o \"id=\"\"$id\"\"[^>]*d=\"\"[^\"\"]*\"\"\" \"C:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\ink3remake-fixed \\(6\\).svg\")",
       "Bash(done)",
       "Bash(grep -l \"stroke\" c:/Users/FabLab_Leuven/Documents/svg_checker/tests/fixtures/*.svg)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(node -e \"const p = require\\(''c:/Users/HC/Documents/own/svg_checker/node_modules/pdfjs-dist/build/pdf.js''\\); console.log\\(Object.keys\\(p\\).filter\\(k => k.includes\\(''SVG''\\)\\)\\)\")",
+      "Bash(npx tsc:*)"
     ]
   }
 }

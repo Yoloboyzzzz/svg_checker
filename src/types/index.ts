@@ -29,9 +29,12 @@ export interface FixedSVG {
   report: QualityReport
 }
 
+import type { PDFDocumentProxy } from 'pdfjs-dist'
+
 export type AppState =
   | { status: 'idle' }
   | { status: 'loading' }
+  | { status: 'pdf-picking'; pdf: PDFDocumentProxy; filename: string }
   | { status: 'error'; message: string }
   | {
       status: 'analyzed'
