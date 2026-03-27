@@ -10,6 +10,16 @@ function isInDefs(el: Element): boolean {
   return false
 }
 
+function isInText(el: Element): boolean {
+  let node: Element | null = el.parentElement
+  while (node) {
+    const tag = (node.localName ?? node.tagName).toLowerCase()
+    if (tag === 'text' || tag === 'tspan') return true
+    node = node.parentElement
+  }
+  return false
+}
+
 function isBlackColor(val: string): boolean {
   const v = val.trim().toLowerCase()
   return v === 'black' || v === '#000' || v === '#000000' ||
@@ -139,7 +149,7 @@ export const compoundPathRule: CheckRule = {
   defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
-    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !isBlack(p))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !isInText(p) && !isBlack(p))
     const violations = paths
       .filter(p => isCompound(p.getAttribute('d') ?? ''))
       .map((el, i) => ({
@@ -159,7 +169,7 @@ export const compoundPathRule: CheckRule = {
   },
 
   fix(doc: Document): void {
-    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !isBlack(p))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !isInText(p) && !isBlack(p))
     for (const path of paths) {
       const d = path.getAttribute('d') ?? ''
       if (!isCompound(d)) continue

@@ -10,6 +10,16 @@ function isInDefs(el: Element): boolean {
   return false
 }
 
+function isInText(el: Element): boolean {
+  let node: Element | null = el.parentElement
+  while (node) {
+    const tag = (node.localName ?? node.tagName).toLowerCase()
+    if (tag === 'text' || tag === 'tspan') return true
+    node = node.parentElement
+  }
+  return false
+}
+
 function hasFill(el: Element): boolean {
   const style = el.getAttribute('style') ?? ''
   for (const decl of style.split(';')) {
@@ -79,8 +89,8 @@ export const duplicatePathRule: CheckRule = {
   defaultWeight: 1/4,
 
   check(doc: Document): CheckResult {
-    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !hasFill(p) && !isBlack(p))
-    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l) && !isBlack(l))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !isInText(p) && !hasFill(p) && !isBlack(p))
+    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l) && !isInText(l) && !isBlack(l))
 
     const seen = new Map<string, number>()
     const dupIndices = new Set<number>()
@@ -113,8 +123,8 @@ export const duplicatePathRule: CheckRule = {
   },
 
   fix(doc: Document): void {
-    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !hasFill(p) && !isBlack(p))
-    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l) && !isBlack(l))
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !isInText(p) && !hasFill(p) && !isBlack(p))
+    const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l) && !isInText(l) && !isBlack(l))
     const seen = new Map<string, Element>()
 
     for (const el of [...paths, ...lines]) {

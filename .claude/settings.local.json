@@ -50,7 +50,10 @@
       "Bash(grep -l \"stroke\" c:/Users/FabLab_Leuven/Documents/svg_checker/tests/fixtures/*.svg)",
       "Bash(xargs grep:*)",
       "Bash(node -e \"const p = require\\(''c:/Users/HC/Documents/own/svg_checker/node_modules/pdfjs-dist/build/pdf.js''\\); console.log\\(Object.keys\\(p\\).filter\\(k => k.includes\\(''SVG''\\)\\)\\)\")",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(head -c 3000 \"c:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\huis4-p1-fixed \\(4\\).svg\")",
+      "Bash(head -c 3000 \"/c/Users/FabLab_Leuven/Documents/svg_checker/huis4-p1-fixed \\(4\\).svg\")",
+      "Bash(grep -o 'svg:text[^>]*>.\\\\{0,200\\\\}' \"/c/Users/FabLab_Leuven/Documents/svg_checker/huis4-p1-fixed \\(4\\).svg\")"
     ]
   }
 }

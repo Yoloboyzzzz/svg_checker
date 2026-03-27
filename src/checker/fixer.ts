@@ -2,6 +2,25 @@ import { parseSVG } from '../utils/svgParse'
 import { serializeSVG } from '../utils/svgSerialize'
 import type { CheckRule, FixedSVG, SVGAnalyzer, SVGFixer } from '../types'
 
+// Returns true if the value string is rgb(60,60,60) / #3c3c3c in any common form
+function isGray60(val: string): boolean {
+  const v = val.trim().toLowerCase()
+  return v === '#3c3c3c' || v === 'rgb(60,60,60)' ||
+    /^rgb\(\s*60\s*,\s*60\s*,\s*60\s*\)$/.test(v)
+}
+
+function hasGray60Color(el: Element): boolean {
+  const styleProps: Record<string, string> = {}
+  for (const decl of (el.getAttribute('style') ?? '').split(';')) {
+    const colon = decl.indexOf(':')
+    if (colon === -1) continue
+    styleProps[decl.slice(0, colon).trim()] = decl.slice(colon + 1).trim()
+  }
+  const fill = styleProps['fill'] ?? el.getAttribute('fill') ?? ''
+  const stroke = styleProps['stroke'] ?? el.getAttribute('stroke') ?? ''
+  return isGray60(fill) || isGray60(stroke)
+}
+
 export function createFixer(rules: CheckRule[], analyzer: SVGAnalyzer): SVGFixer {
   return {
     fix(svgString: string, filename: string, _fileSize: number): FixedSVG {
@@ -17,6 +36,10 @@ export function createFixer(rules: CheckRule[], analyzer: SVGAnalyzer): SVGFixer
         if ((path.getAttribute('d') ?? '').trim() === '') {
           path.parentNode?.removeChild(path)
         }
+      }
+      // Remove all elements with fill or stroke of rgb(60,60,60) / #3c3c3c
+      for (const el of Array.from(doc.querySelectorAll('*'))) {
+        if (hasGray60Color(el)) el.parentNode?.removeChild(el)
       }
       const content = serializeSVG(doc)
       const fixedFilename = filename.replace(/\.svg$/i, '-fixed.svg')

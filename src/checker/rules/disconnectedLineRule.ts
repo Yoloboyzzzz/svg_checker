@@ -106,6 +106,16 @@ function isInDefs(el: Element): boolean {
   return false
 }
 
+function isInText(el: Element): boolean {
+  let node: Element | null = el.parentElement
+  while (node) {
+    const tag = (node.localName ?? node.tagName).toLowerCase()
+    if (tag === 'text' || tag === 'tspan') return true
+    node = node.parentElement
+  }
+  return false
+}
+
 function parseNums(s: string): number[] {
   return (s.match(/[-+]?(?:\d*\.?\d+)(?:[eE][-+]?\d+)?/g) ?? []).map(Number)
 }
@@ -209,6 +219,7 @@ function collectSegments(doc: Document): PathFrag[] {
 
   for (const el of Array.from(doc.querySelectorAll('line'))) {
     if (isInDefs(el)) continue
+    if (isInText(el)) continue
     if (isBlack(el)) continue
     const x1 = parseFloat(el.getAttribute('x1') ?? '0')
     const y1 = parseFloat(el.getAttribute('y1') ?? '0')
@@ -225,6 +236,7 @@ function collectSegments(doc: Document): PathFrag[] {
 
   for (const el of Array.from(doc.querySelectorAll('path'))) {
     if (isInDefs(el)) continue
+    if (isInText(el)) continue
     if (hasFill(el) || isBlack(el)) continue
     const linears = extractLinearFrags(el)
     if (linears.length > 0) { result.push(...linears); continue }
