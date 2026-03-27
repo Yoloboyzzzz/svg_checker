@@ -26,6 +26,8 @@ function isBlack(el: Element): boolean {
   }
   const fillVal = styleProps['fill'] ?? el.getAttribute('fill') ?? ''
   const strokeVal = styleProps['stroke'] ?? el.getAttribute('stroke') ?? ''
+  // SVG default fill is black — absent fill means black
+  if (fillVal === '') return true
   return isBlackColor(fillVal) || isBlackColor(strokeVal)
 }
 
