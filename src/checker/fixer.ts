@@ -41,6 +41,17 @@ export function createFixer(rules: CheckRule[], analyzer: SVGAnalyzer): SVGFixer
       for (const el of Array.from(doc.querySelectorAll('*'))) {
         if (hasGray60Color(el)) el.parentNode?.removeChild(el)
       }
+      // Set stroke-width to 0.1mm on every element, removing any inline override
+      for (const el of Array.from(doc.querySelectorAll('*'))) {
+        const style = el.getAttribute('style') ?? ''
+        const newStyle = style
+          .split(';')
+          .filter(d => d.trim() && !d.trim().startsWith('stroke-width'))
+          .join(';')
+        if (newStyle !== style) el.setAttribute('style', newStyle)
+        el.removeAttribute('stroke-width')
+        el.setAttribute('stroke-width', '0.1mm')
+      }
       const content = serializeSVG(doc)
       const fixedFilename = filename.replace(/\.svg$/i, '-fixed.svg')
       const report = analyzer.analyze(content, fixedFilename, new Blob([content]).size)
