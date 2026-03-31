@@ -71,6 +71,37 @@ function pathKey(el: Element): string {
   return normalizePath(el.getAttribute('d') ?? '') + '|transform=' + transform
 }
 
+// For curved paths (C/S/Q/T/A commands), use a bounding-box key instead of the raw
+// path string. Two near-identical circles traced in opposite directions have different
+// d-strings but identical bounding boxes, so string comparison fails for them.
+// Numbers are extracted positionally (even-indexed = x-like, odd-indexed = y-like) and
+// rounded to the nearest integer — giving ~0.5 unit tolerance to absorb floating-point
+// differences from different vector editors.
+function pathBBoxKey(el: Element): string {
+  const d = el.getAttribute('d') ?? ''
+  const transform = el.getAttribute('transform') ?? ''
+  const nums = (d.match(/[-+]?(?:\d*\.?\d+)(?:[eE][+-]?\d+)?/g) ?? []).map(Number)
+  if (nums.length < 2) return pathKey(el)
+  const xs = nums.filter((_, i) => i % 2 === 0)
+  const ys = nums.filter((_, i) => i % 2 === 1)
+  const minX = Math.round(Math.min(...xs))
+  const maxX = Math.round(Math.max(...xs))
+  const minY = Math.round(Math.min(...ys))
+  const maxY = Math.round(Math.max(...ys))
+  return `bbox|${minX}|${maxX}|${minY}|${maxY}|transform=${transform}`
+}
+
+function hasCurveCommands(d: string): boolean {
+  return /[CcSsQqTtAa]/.test(d)
+}
+
+function elementKey(el: Element): string {
+  const tag = (el.localName ?? el.tagName).toLowerCase()
+  if (tag === 'line') return lineKey(el)
+  const d = el.getAttribute('d') ?? ''
+  return hasCurveCommands(d) ? pathBBoxKey(el) : pathKey(el)
+}
+
 // Geometry-only key for <line> elements — endpoints sorted so reversed copies match
 function lineKey(el: Element): string {
   const round = (n: number) => Math.round(n * 10) / 10
@@ -97,7 +128,7 @@ export const duplicatePathRule: CheckRule = {
     const allElements: Element[] = [...paths, ...lines]
 
     allElements.forEach((el, i) => {
-      const key = (el.localName ?? el.tagName).toLowerCase() === 'line' ? lineKey(el) : pathKey(el)
+      const key = elementKey(el)
       if (seen.has(key)) {
         dupIndices.add(i)
         dupIndices.add(seen.get(key)!)
@@ -128,7 +159,7 @@ export const duplicatePathRule: CheckRule = {
     const seen = new Map<string, Element>()
 
     for (const el of [...paths, ...lines]) {
-      const key = (el.localName ?? el.tagName).toLowerCase() === 'line' ? lineKey(el) : pathKey(el)
+      const key = elementKey(el)
       if (seen.has(key)) {
         el.parentNode?.removeChild(el)
       } else {
