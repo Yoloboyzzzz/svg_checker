@@ -175,6 +175,52 @@ function deduplicateFragsInGroup(segs: PathFrag[]): PathFrag[] {
   return result
 }
 
+// Parses paths that contain only M/m and Q/q commands (quadratic beziers),
+// with no other curve or close commands. Chains all Q segments into a single
+// PathFrag from the path's overall start to end.
+// Reversing a quadratic `q cx,cy ex,ey` from end back to start:
+//   relative control = (cx-ex, cy-ey), relative end = (-ex, -ey)
+function extractQFrag(el: Element): PathFrag | null {
+  const d = el.getAttribute('d') ?? ''
+  if (/[CcSsAaZzLlHhVv]/.test(d)) return null
+  if (!/[Qq]/.test(d)) return null
+  if ((d.match(/[Mm]/g) ?? []).length !== 1) return null
+
+  const mMatch = d.match(/^[\s]*[Mm]\s*([-+\d.eE]+)[,\s]+([-+\d.eE]+)/)
+  if (!mMatch) return null
+  const startX = parseFloat(mMatch[1]), startY = parseFloat(mMatch[2])
+  let curX = startX, curY = startY
+
+  // Forward command strings for each Q segment
+  const forwardParts: string[] = []
+  // Reverse command strings (built in reverse order, then reversed at end)
+  const reverseParts: string[] = []
+
+  const qRe = /([Qq])\s*([-+\d.eE]+)[,\s]+([-+\d.eE]+)[,\s]+([-+\d.eE]+)[,\s]+([-+\d.eE]+)/g
+  let m: RegExpExecArray | null
+  while ((m = qRe.exec(d)) !== null) {
+    const isRel = m[1] === 'q'
+    const cx = isRel ? curX + parseFloat(m[2]) : parseFloat(m[2])
+    const cy = isRel ? curY + parseFloat(m[3]) : parseFloat(m[3])
+    const ex = isRel ? curX + parseFloat(m[4]) : parseFloat(m[4])
+    const ey = isRel ? curY + parseFloat(m[5]) : parseFloat(m[5])
+    forwardParts.push(`Q ${cx},${cy} ${ex},${ey}`)
+    // Reverse: from (ex,ey) back to (curX,curY); control point stays the same
+    reverseParts.push(`Q ${cx},${cy} ${curX},${curY}`)
+    curX = ex; curY = ey
+  }
+
+  if (forwardParts.length === 0) return null
+
+  return {
+    start: { x: startX, y: startY },
+    end: { x: curX, y: curY },
+    forwardD: forwardParts.join(' '),
+    reverseD: reverseParts.reverse().join(' '),
+    el
+  }
+}
+
 // Parses paths that contain a single arc command (a/A), with an optional
 // leading M/m. Preserves the arc parameters so the curve survives the merge.
 // Reversing an arc means flipping the sweep-flag and negating relative offsets.
@@ -240,6 +286,8 @@ function collectSegments(doc: Document): PathFrag[] {
     if (hasFill(el) || isBlack(el)) continue
     const linears = extractLinearFrags(el)
     if (linears.length > 0) { result.push(...linears); continue }
+    const q = extractQFrag(el)
+    if (q) { result.push(q); continue }
     const arc = extractArcFrag(el)
     if (arc) result.push(arc)
   }
@@ -373,6 +421,199 @@ function mergeCollinearOverlaps(frags: PathFrag[]): PathFrag[] {
   return result
 }
 
+// ── Circular-arc overlap detection and merging ──────────────────────────────
+
+interface ArcInfo {
+  cx: number; cy: number; r: number
+  startAngle: number; endAngle: number  // degrees, 0=+x axis, increases CW in SVG screen coords
+  sweep: number
+  el: Element
+}
+
+// Compute the center of a circular arc (rx=ry=r, rotation=0).
+// Returns null when the two points are too far apart for the given radius.
+function computeArcCenter(
+  x1: number, y1: number, x2: number, y2: number,
+  r: number, largeArc: number, sweep: number
+): { cx: number; cy: number } | null {
+  const hx = (x1 - x2) / 2, hy = (y1 - y2) / 2
+  const hs = hx * hx + hy * hy
+  if (hs >= r * r - 1e-6) return null
+  // sign: (largeArc XOR sweep) selects which of the two candidate centers to use
+  const sign = (largeArc === sweep) ? -1 : 1
+  const t = sign * Math.sqrt(r * r - hs)
+  const sqHs = Math.sqrt(hs)
+  return {
+    cx: (x1 + x2) / 2 + t * hy / sqHs,
+    cy: (y1 + y2) / 2 - t * hx / sqHs
+  }
+}
+
+function toDegrees(rad: number): number {
+  return (((rad * 180 / Math.PI) % 360) + 360) % 360
+}
+
+function normAngle(a: number): number {
+  return ((a % 360) + 360) % 360
+}
+
+// Angular span covered by this arc in its sweep direction (always > 0, ≤ 360)
+function arcSpanDeg(info: ArcInfo): number {
+  const span = info.sweep === 1
+    ? normAngle(info.endAngle - info.startAngle)
+    : normAngle(info.startAngle - info.endAngle)
+  return span === 0 ? 360 : span
+}
+
+// Parse all circular arc segments (A/a, rx=ry, rotation=0) from an eligible path element.
+// Returns one ArcInfo per arc command. Paths with C/S/Q/T/Z commands are skipped.
+function collectArcInfos(el: Element): ArcInfo[] {
+  const d = el.getAttribute('d') ?? ''
+  if (/[CcSsQqTtZz]/.test(d)) return []
+  if (!/[Aa]/.test(d)) return []
+  if (isInDefs(el) || isInText(el) || hasFill(el) || isBlack(el)) return []
+
+  const mMatch = d.match(/^[\s]*[Mm]\s*([-+\d.eE]+)[,\s]+([-+\d.eE]+)/)
+  if (!mMatch) return []
+  let curX = parseFloat(mMatch[1])
+  let curY = parseFloat(mMatch[2])
+
+  const result: ArcInfo[] = []
+  const arcRe = /([Aa])\s*([-+\d.eE]+)[,\s]+([-+\d.eE]+)[,\s]+([-+\d.eE]+)[,\s]+([01])[,\s]+([01])[,\s]+([-+\d.eE]+)[,\s]+([-+\d.eE]+)/g
+  let m: RegExpExecArray | null
+  while ((m = arcRe.exec(d)) !== null) {
+    const isRel = m[1] === 'a'
+    const rx = parseFloat(m[2]), ry = parseFloat(m[3])
+    const rot = parseFloat(m[4])
+    const largeArc = parseInt(m[5]), sweep = parseInt(m[6])
+    const endX = isRel ? curX + parseFloat(m[7]) : parseFloat(m[7])
+    const endY = isRel ? curY + parseFloat(m[8]) : parseFloat(m[8])
+    // Only handle circular arcs with no rotation
+    if (Math.abs(rx - ry) < 0.01 && Math.abs(rot) < 0.01) {
+      const c = computeArcCenter(curX, curY, endX, endY, rx, largeArc, sweep)
+      if (c) {
+        result.push({
+          cx: c.cx, cy: c.cy, r: rx,
+          startAngle: toDegrees(Math.atan2(curY - c.cy, curX - c.cx)),
+          endAngle: toDegrees(Math.atan2(endY - c.cy, endX - c.cx)),
+          sweep, el
+        })
+      }
+    }
+    curX = endX
+    curY = endY
+  }
+  return result
+}
+
+// Group key: arcs on the same circle with the same sweep direction and transform
+function circleKey(info: ArcInfo, el: Element): string {
+  const r = (n: number) => Math.round(n * 10) / 10
+  const transform = el.getAttribute('transform') ?? ''
+  return `${r(info.cx)},${r(info.cy)},${r(info.r)},sw${info.sweep}|t=${transform}`
+}
+
+// Merge a group of ArcInfos on the same circle into the minimal non-overlapping set.
+// Uses offset-from-reference representation to avoid angle wrap-around issues.
+function mergeArcGroup(infos: ArcInfo[]): ArcInfo[] {
+  if (infos.length <= 1) return infos
+  const sweep = infos[0].sweep
+  const ref = infos[0].startAngle
+
+  // Convert each arc to [startOffset, endOffset] measured in sweep direction from ref
+  const intervals = infos.map(info => {
+    const startOff = sweep === 1
+      ? normAngle(info.startAngle - ref)
+      : normAngle(ref - info.startAngle)
+    return { start: startOff, end: startOff + arcSpanDeg(info), info }
+  })
+  intervals.sort((a, b) => a.start - b.start)
+
+  // Standard interval merge with 0.5° touching tolerance
+  const merged: { start: number; end: number; info: ArcInfo }[] = []
+  for (const iv of intervals) {
+    if (merged.length === 0 || iv.start > merged[merged.length - 1].end + 0.5) {
+      merged.push({ ...iv })
+    } else if (iv.end > merged[merged.length - 1].end) {
+      merged[merged.length - 1].end = iv.end
+    }
+  }
+
+  // Convert offsets back to absolute angles
+  return merged.map(m => {
+    const startAngle = sweep === 1 ? normAngle(ref + m.start) : normAngle(ref - m.start)
+    const endAngle   = sweep === 1 ? normAngle(ref + m.end)   : normAngle(ref - m.end)
+    return { ...m.info, startAngle, endAngle }
+  })
+}
+
+// Build a <path> element from a merged ArcInfo, copying style from refEl
+function arcInfoToElement(info: ArcInfo, doc: Document, refEl: Element): Element {
+  const toRad = (deg: number) => deg * Math.PI / 180
+  const x1 = info.cx + info.r * Math.cos(toRad(info.startAngle))
+  const y1 = info.cy + info.r * Math.sin(toRad(info.startAngle))
+  const x2 = info.cx + info.r * Math.cos(toRad(info.endAngle))
+  const y2 = info.cy + info.r * Math.sin(toRad(info.endAngle))
+  const largeArc = arcSpanDeg(info) > 180 ? 1 : 0
+  const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', `M ${x1},${y1} A ${info.r},${info.r} 0 ${largeArc} ${info.sweep} ${x2},${y2}`)
+  for (const attr of Array.from(refEl.attributes)) {
+    if (!['id', 'd'].includes(attr.name)) path.setAttribute(attr.name, attr.value)
+  }
+  return path
+}
+
+// Detect which elements contain arcs that overlap with arcs from a different element
+// on the same circle. Returns the set of violating elements.
+function findOverlappingArcElements(doc: Document): Set<Element> {
+  const groups = new Map<string, ArcInfo[]>()
+  for (const el of Array.from(doc.querySelectorAll('path'))) {
+    for (const arc of collectArcInfos(el)) {
+      const key = circleKey(arc, el)
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(arc)
+    }
+  }
+  const violating = new Set<Element>()
+  for (const arcs of groups.values()) {
+    const distinctEls = new Set(arcs.map(a => a.el))
+    if (distinctEls.size < 2) continue
+    const merged = mergeArcGroup(arcs)
+    if (merged.length < distinctEls.size) {
+      for (const el of distinctEls) violating.add(el)
+    }
+  }
+  return violating
+}
+
+// Merge all overlapping circular arcs in-place on the document
+function mergeOverlappingArcs(doc: Document): void {
+  const groups = new Map<string, ArcInfo[]>()
+  for (const el of Array.from(doc.querySelectorAll('path'))) {
+    for (const arc of collectArcInfos(el)) {
+      const key = circleKey(arc, el)
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(arc)
+    }
+  }
+
+  for (const arcs of groups.values()) {
+    const distinctEls = new Set(arcs.map(a => a.el))
+    if (distinctEls.size < 2) continue
+    const merged = mergeArcGroup(arcs)
+    if (merged.length >= distinctEls.size) continue  // nothing changed
+    const refEl = arcs[0].el
+    const parent = refEl.parentNode
+    if (!parent) continue
+    for (const info of merged) {
+      parent.insertBefore(arcInfoToElement(info, doc, refEl), refEl)
+    }
+    for (const el of distinctEls) {
+      el.parentNode?.removeChild(el)
+    }
+  }
+}
+
 export const disconnectedLineRule: CheckRule = {
   category: 'disconnected-lines',
   label: 'No Bare Lines',
@@ -404,6 +645,9 @@ export const disconnectedLineRule: CheckRule = {
         }
       }
     }
+
+    // Detect overlapping circular arcs across different elements
+    for (const el of findOverlappingArcElements(doc)) violatingSet.add(el)
 
     const violations = Array.from(violatingSet).map((el, i) => {
       const id = el.getAttribute('id')
@@ -444,6 +688,9 @@ export const disconnectedLineRule: CheckRule = {
       const dx = nums[nums.length - 2], dy = nums[nums.length - 1]
       if (Math.sqrt(dx * dx + dy * dy) < 1.0) el.parentNode?.removeChild(el)
     }
+
+    // Merge overlapping circular arcs before straight-line chaining
+    mergeOverlappingArcs(doc)
 
     const segments = collectSegments(doc)
     if (segments.length === 0) return
