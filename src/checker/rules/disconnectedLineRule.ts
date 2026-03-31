@@ -30,7 +30,7 @@ function sharesEndpoint(a: PathFrag, b: PathFrag): boolean {
 function styleKey(el: Element): string {
   const strokeProps: Record<string, string> = {}
   for (const attr of Array.from(el.attributes)) {
-    if (['stroke', 'stroke-width', 'stroke-opacity'].includes(attr.name)) {
+    if (['stroke', 'stroke-opacity'].includes(attr.name)) {
       strokeProps[attr.name] = attr.value
     }
   }
@@ -40,7 +40,7 @@ function styleKey(el: Element): string {
     if (colon === -1) continue
     const prop = decl.slice(0, colon).trim()
     const val = decl.slice(colon + 1).trim()
-    if (['stroke', 'stroke-width', 'stroke-opacity'].includes(prop)) {
+    if (['stroke', 'stroke-opacity'].includes(prop)) {
       strokeProps[prop] = val
     }
   }
@@ -297,6 +297,82 @@ function chainFrags(frags: PathFrag[]): Chain[] {
   return chains
 }
 
+// If two straight-line frags (L commands) are collinear and their projections
+// onto the shared axis overlap (more than just touching), returns a single merged
+// frag spanning the full extent of both. Arc frags are left unchanged.
+function tryMergeCollinear(a: PathFrag, b: PathFrag): PathFrag | null {
+  if (!a.forwardD.trimStart().startsWith('L')) return null
+  if (!b.forwardD.trimStart().startsWith('L')) return null
+
+  const dx = a.end.x - a.start.x
+  const dy = a.end.y - a.start.y
+  const lenSq = dx * dx + dy * dy
+  if (lenSq < 1e-10) return null
+  const len = Math.sqrt(lenSq)
+  const ux = dx / len, uy = dy / len
+
+  const bdx = b.end.x - b.start.x
+  const bdy = b.end.y - b.start.y
+  const bLen = Math.sqrt(bdx * bdx + bdy * bdy)
+  if (bLen < 1e-10) return null
+
+  // Parallelism: |cross(unit_a, unit_b)| must be near zero
+  if (Math.abs(ux * (bdy / bLen) - uy * (bdx / bLen)) > 0.01) return null
+
+  // Collinearity: perpendicular distance from b.start to line through a
+  const cdx = b.start.x - a.start.x
+  const cdy = b.start.y - a.start.y
+  if (Math.abs(ux * cdy - uy * cdx) > EPS) return null
+
+  // Project all endpoints onto the line
+  const t_b0 = ux * cdx + uy * cdy
+  const t_b1 = ux * (b.end.x - a.start.x) + uy * (b.end.y - a.start.y)
+  const minB = Math.min(t_b0, t_b1)
+  const maxB = Math.max(t_b0, t_b1)
+  // a's range is always [0, len]
+  const overlapMin = Math.max(0, minB)
+  const overlapMax = Math.min(len, maxB)
+
+  // Require real overlap (> EPS), not just endpoint touching — chainFrags handles that
+  if (overlapMax <= overlapMin + EPS) return null
+
+  const tMin = Math.min(0, minB)
+  const tMax = Math.max(len, maxB)
+  const start: Point = { x: a.start.x + ux * tMin, y: a.start.y + uy * tMin }
+  const end: Point = { x: a.start.x + ux * tMax, y: a.start.y + uy * tMax }
+
+  return {
+    start, end,
+    forwardD: `L ${end.x},${end.y}`,
+    reverseD: `L ${start.x},${start.y}`,
+    el: a.el
+  }
+}
+
+// Iteratively merges collinear-overlapping frag pairs (from different elements)
+// until no more merges are possible.
+function mergeCollinearOverlaps(frags: PathFrag[]): PathFrag[] {
+  let result = [...frags]
+  let changed = true
+  while (changed) {
+    changed = false
+    outer: for (let i = 0; i < result.length; i++) {
+      for (let j = i + 1; j < result.length; j++) {
+        if (result[i].el === result[j].el) continue
+        const m = tryMergeCollinear(result[i], result[j])
+        if (m) {
+          result.splice(j, 1)
+          result.splice(i, 1)
+          result.push(m)
+          changed = true
+          break outer
+        }
+      }
+    }
+  }
+  return result
+}
+
 export const disconnectedLineRule: CheckRule = {
   category: 'disconnected-lines',
   label: 'No Bare Lines',
@@ -320,7 +396,8 @@ export const disconnectedLineRule: CheckRule = {
     for (const segs of groups.values()) {
       for (let i = 0; i < segs.length; i++) {
         for (let j = i + 1; j < segs.length; j++) {
-          if (sharesEndpoint(segs[i], segs[j]) && segs[i].el !== segs[j].el) {
+          if (segs[i].el === segs[j].el) continue
+          if (sharesEndpoint(segs[i], segs[j]) || tryMergeCollinear(segs[i], segs[j])) {
             violatingSet.add(segs[i].el)
             violatingSet.add(segs[j].el)
           }
@@ -379,7 +456,7 @@ export const disconnectedLineRule: CheckRule = {
     }
 
     for (const segs of groups.values()) {
-      const chains = chainFrags(deduplicateFragsInGroup(segs))
+      const chains = chainFrags(mergeCollinearOverlaps(deduplicateFragsInGroup(segs)))
       const refEl = segs[0].el
       const groupParent = refEl.parentNode!
       for (const chain of chains) {
