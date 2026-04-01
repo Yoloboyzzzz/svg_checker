@@ -53,7 +53,8 @@
       "Bash(npx tsc:*)",
       "Bash(head -c 3000 \"c:\\\\Users\\\\FabLab_Leuven\\\\Documents\\\\svg_checker\\\\huis4-p1-fixed \\(4\\).svg\")",
       "Bash(head -c 3000 \"/c/Users/FabLab_Leuven/Documents/svg_checker/huis4-p1-fixed \\(4\\).svg\")",
-      "Bash(grep -o 'svg:text[^>]*>.\\\\{0,200\\\\}' \"/c/Users/FabLab_Leuven/Documents/svg_checker/huis4-p1-fixed \\(4\\).svg\")"
+      "Bash(grep -o 'svg:text[^>]*>.\\\\{0,200\\\\}' \"/c/Users/FabLab_Leuven/Documents/svg_checker/huis4-p1-fixed \\(4\\).svg\")",
+      "Bash(node -e \":*)"
     ]
   }
 }

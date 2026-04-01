@@ -2,14 +2,92 @@ import type { CheckResult, CheckRule } from '../../types'
 
 interface Point { x: number; y: number }
 
+// ── 2D affine transform utilities ────────────────────────────────────────────
+// SVG matrix(a,b,c,d,e,f) stored as [a,b,c,d,e,f].
+// Applies to point: x' = a*x + c*y + e, y' = b*x + d*y + f
+type Mat = [number, number, number, number, number, number]
+
+function identityMat(): Mat { return [1, 0, 0, 1, 0, 0] }
+
+function isIdentityMat(m: Mat): boolean {
+  return m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && m[4] === 0 && m[5] === 0
+}
+
+// outer * inner — applies inner first, then outer
+function composeMat(outer: Mat, inner: Mat): Mat {
+  const [a1, b1, c1, d1, e1, f1] = outer
+  const [a2, b2, c2, d2, e2, f2] = inner
+  return [
+    a1 * a2 + c1 * b2, b1 * a2 + d1 * b2,
+    a1 * c2 + c1 * d2, b1 * c2 + d1 * d2,
+    a1 * e2 + c1 * f2 + e1, b1 * e2 + d1 * f2 + f1
+  ]
+}
+
+function applyMat(m: Mat, p: Point): Point {
+  return { x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] }
+}
+
+function invertMat(m: Mat): Mat | null {
+  const det = m[0] * m[3] - m[1] * m[2]
+  if (Math.abs(det) < 1e-10) return null
+  return [
+    m[3] / det, -m[1] / det, -m[2] / det, m[0] / det,
+    (m[2] * m[5] - m[3] * m[4]) / det,
+    (m[1] * m[4] - m[0] * m[5]) / det
+  ]
+}
+
+function parseTransformAttr(s: string): Mat {
+  let result = identityMat()
+  const re = /(\w+)\s*\(([^)]*)\)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(s)) !== null) {
+    const fn = m[1]
+    const args = m[2].trim().split(/[\s,]+/).map(Number)
+    let local: Mat
+    switch (fn) {
+      case 'matrix': local = args as unknown as Mat; break
+      case 'translate': local = [1, 0, 0, 1, args[0], args[1] ?? 0]; break
+      case 'scale': local = [args[0], 0, 0, args[1] ?? args[0], 0, 0]; break
+      case 'rotate': {
+        const angle = args[0] * Math.PI / 180
+        const cos = Math.cos(angle), sin = Math.sin(angle)
+        const cx = args[1] ?? 0, cy = args[2] ?? 0
+        local = [cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy]
+        break
+      }
+      case 'skewX': { const t = Math.tan(args[0] * Math.PI / 180); local = [1, 0, t, 1, 0, 0]; break }
+      case 'skewY': { const t = Math.tan(args[0] * Math.PI / 180); local = [1, t, 0, 1, 0, 0]; break }
+      default: continue
+    }
+    // transforms in the attribute string compose left-to-right (rightmost applied first to point)
+    result = composeMat(result, local)
+  }
+  return result
+}
+
+// Compose all transforms from element up to root (child → parent order)
+function getComputedTransform(el: Element): Mat {
+  let mat = identityMat()
+  let node: Element | null = el
+  while (node) {
+    const t = node.getAttribute('transform')
+    if (t) mat = composeMat(parseTransformAttr(t), mat)
+    node = node.parentElement
+  }
+  return mat
+}
+
 // Instead of collapsing paths to point arrays, we store the raw path-command
 // fragments so that arc commands survive the merge unchanged.
 interface PathFrag {
   start: Point
   end: Point
-  forwardD: string  // path commands (no leading M) from start → end
-  reverseD: string  // path commands (no leading M) from end → start
+  forwardD: string    // path commands (no leading M) from start → end  (local coords)
+  reverseD: string    // path commands (no leading M) from end → start  (local coords)
   el: Element
+  localToScreen?: Mat // set for L-frags when the element has a non-identity transform
 }
 
 // Join tolerance: absorbs floating-point rounding from vector editors (< 0.1 units)
@@ -271,12 +349,14 @@ function collectSegments(doc: Document): PathFrag[] {
     const y1 = parseFloat(el.getAttribute('y1') ?? '0')
     const x2 = parseFloat(el.getAttribute('x2') ?? '0')
     const y2 = parseFloat(el.getAttribute('y2') ?? '0')
+    const mat = getComputedTransform(el)
     result.push({
       start: { x: x1, y: y1 },
       end: { x: x2, y: y2 },
       forwardD: `L ${x2},${y2}`,
       reverseD: `L ${x1},${y1}`,
-      el
+      el,
+      localToScreen: isIdentityMat(mat) ? undefined : mat
     })
   }
 
@@ -285,7 +365,12 @@ function collectSegments(doc: Document): PathFrag[] {
     if (isInText(el)) continue
     if (hasFill(el) || isBlack(el)) continue
     const linears = extractLinearFrags(el)
-    if (linears.length > 0) { result.push(...linears); continue }
+    if (linears.length > 0) {
+      const mat = getComputedTransform(el)
+      const lts = isIdentityMat(mat) ? undefined : mat
+      result.push(...linears.map(f => ({ ...f, localToScreen: lts })))
+      continue
+    }
     const q = extractQFrag(el)
     if (q) { result.push(q); continue }
     const arc = extractArcFrag(el)
@@ -348,33 +433,44 @@ function chainFrags(frags: PathFrag[]): Chain[] {
 // If two straight-line frags (L commands) are collinear and their projections
 // onto the shared axis overlap (more than just touching), returns a single merged
 // frag spanning the full extent of both. Arc frags are left unchanged.
+// Comparison is done in screen space so frags with different parent transforms
+// are handled correctly. The result is expressed in a's local coordinate space
+// (since the merged frag keeps a.el) with localToScreen preserved.
 function tryMergeCollinear(a: PathFrag, b: PathFrag): PathFrag | null {
   if (!a.forwardD.trimStart().startsWith('L')) return null
   if (!b.forwardD.trimStart().startsWith('L')) return null
 
-  const dx = a.end.x - a.start.x
-  const dy = a.end.y - a.start.y
+  // Convert all endpoints to screen space for comparison
+  const matA = a.localToScreen ?? identityMat()
+  const matB = b.localToScreen ?? identityMat()
+  const aS = applyMat(matA, a.start)
+  const aE = applyMat(matA, a.end)
+  const bS = applyMat(matB, b.start)
+  const bE = applyMat(matB, b.end)
+
+  const dx = aE.x - aS.x
+  const dy = aE.y - aS.y
   const lenSq = dx * dx + dy * dy
   if (lenSq < 1e-10) return null
   const len = Math.sqrt(lenSq)
   const ux = dx / len, uy = dy / len
 
-  const bdx = b.end.x - b.start.x
-  const bdy = b.end.y - b.start.y
+  const bdx = bE.x - bS.x
+  const bdy = bE.y - bS.y
   const bLen = Math.sqrt(bdx * bdx + bdy * bdy)
   if (bLen < 1e-10) return null
 
   // Parallelism: |cross(unit_a, unit_b)| must be near zero
   if (Math.abs(ux * (bdy / bLen) - uy * (bdx / bLen)) > 0.01) return null
 
-  // Collinearity: perpendicular distance from b.start to line through a
-  const cdx = b.start.x - a.start.x
-  const cdy = b.start.y - a.start.y
+  // Collinearity: perpendicular distance from bS to line through aS (screen space)
+  const cdx = bS.x - aS.x
+  const cdy = bS.y - aS.y
   if (Math.abs(ux * cdy - uy * cdx) > EPS) return null
 
-  // Project all endpoints onto the line
+  // Project all screen-space endpoints onto the line
   const t_b0 = ux * cdx + uy * cdy
-  const t_b1 = ux * (b.end.x - a.start.x) + uy * (b.end.y - a.start.y)
+  const t_b1 = ux * (bE.x - aS.x) + uy * (bE.y - aS.y)
   const minB = Math.min(t_b0, t_b1)
   const maxB = Math.max(t_b0, t_b1)
   // a's range is always [0, len]
@@ -386,19 +482,27 @@ function tryMergeCollinear(a: PathFrag, b: PathFrag): PathFrag | null {
 
   const tMin = Math.min(0, minB)
   const tMax = Math.max(len, maxB)
-  const start: Point = { x: a.start.x + ux * tMin, y: a.start.y + uy * tMin }
-  const end: Point = { x: a.start.x + ux * tMax, y: a.start.y + uy * tMax }
+  // Merged coords in screen space
+  const ssStart: Point = { x: aS.x + ux * tMin, y: aS.y + uy * tMin }
+  const ssEnd: Point   = { x: aS.x + ux * tMax, y: aS.y + uy * tMax }
+
+  // Convert back to a's local coordinate space (merged frag keeps a.el and its transform)
+  const invA = isIdentityMat(matA) ? null : invertMat(matA)
+  const start = invA ? applyMat(invA, ssStart) : ssStart
+  const end   = invA ? applyMat(invA, ssEnd)   : ssEnd
 
   return {
     start, end,
     forwardD: `L ${end.x},${end.y}`,
     reverseD: `L ${start.x},${start.y}`,
-    el: a.el
+    el: a.el,
+    localToScreen: a.localToScreen  // preserve so subtractLinearCoverage works correctly
   }
 }
 
-// Iteratively merges collinear-overlapping frag pairs (from different elements)
-// until no more merges are possible.
+// Iteratively merges collinear-overlapping frag pairs until no more merges are possible.
+// Adjacent frags from the same element are safe to compare: they only touch at one point
+// and will never pass the overlap-threshold check in tryMergeCollinear.
 function mergeCollinearOverlaps(frags: PathFrag[]): PathFrag[] {
   let result = [...frags]
   let changed = true
@@ -406,7 +510,6 @@ function mergeCollinearOverlaps(frags: PathFrag[]): PathFrag[] {
     changed = false
     outer: for (let i = 0; i < result.length; i++) {
       for (let j = i + 1; j < result.length; j++) {
-        if (result[i].el === result[j].el) continue
         const m = tryMergeCollinear(result[i], result[j])
         if (m) {
           result.splice(j, 1)
@@ -419,6 +522,65 @@ function mergeCollinearOverlaps(frags: PathFrag[]): PathFrag[] {
     }
   }
   return result
+}
+
+// ── Cross-color collinear subtraction ────────────────────────────────────────
+// When a higher-priority (later in DOM = rendered on top) L-frag covers part of
+// a lower-priority L-frag, trim the lower one to remove the covered interval.
+// Returns zero, one, or two sub-frags covering the uncovered portions.
+function subtractLinearCoverage(frag: PathFrag, covers: PathFrag[]): PathFrag[] {
+  if (!frag.forwardD.trimStart().startsWith('L')) return [frag]
+
+  // Work in screen space so transforms don't prevent cross-group detection
+  const fragMat = frag.localToScreen ?? identityMat()
+  const ss = applyMat(fragMat, frag.start)
+  const se = applyMat(fragMat, frag.end)
+
+  const dx = se.x - ss.x, dy = se.y - ss.y
+  const len = Math.sqrt(dx * dx + dy * dy)
+  if (len < 1e-10) return []
+  const ux = dx / len, uy = dy / len
+
+  let intervals: [number, number][] = [[0, len]]
+
+  for (const cover of covers) {
+    if (!cover.forwardD.trimStart().startsWith('L')) continue
+    const coverMat = cover.localToScreen ?? identityMat()
+    const cs = applyMat(coverMat, cover.start)
+    const ce = applyMat(coverMat, cover.end)
+    const cdx = cs.x - ss.x, cdy = cs.y - ss.y
+    // Collinearity
+    if (Math.abs(ux * cdy - uy * cdx) > EPS) continue
+    // Parallelism
+    const covLen = Math.sqrt((ce.x - cs.x) ** 2 + (ce.y - cs.y) ** 2)
+    if (covLen < 1e-10) continue
+    if (Math.abs(ux * ((ce.y - cs.y) / covLen) - uy * ((ce.x - cs.x) / covLen)) > 0.01) continue
+    const tc0 = ux * cdx + uy * cdy
+    const tc1 = tc0 + ux * (ce.x - cs.x) + uy * (ce.y - cs.y)
+    const tMin = Math.min(tc0, tc1) - EPS
+    const tMax = Math.max(tc0, tc1) + EPS
+    intervals = intervals.flatMap(([a, b]) => {
+      if (tMax <= a || tMin >= b) return [[a, b]] as [number, number][]
+      const result: [number, number][] = []
+      if (a < tMin - EPS) result.push([a, tMin])
+      if (b > tMax + EPS) result.push([tMax, b])
+      return result
+    })
+  }
+
+  // Convert screen-space intervals back to local space via the inverse transform
+  const invMat = isIdentityMat(fragMat) ? fragMat : (invertMat(fragMat) ?? fragMat)
+  return intervals.map(([t0, t1]) => {
+    const localS = applyMat(invMat, { x: ss.x + ux * t0, y: ss.y + uy * t0 })
+    const localE = applyMat(invMat, { x: ss.x + ux * t1, y: ss.y + uy * t1 })
+    return {
+      start: localS, end: localE,
+      forwardD: `L ${localE.x},${localE.y}`,
+      reverseD: `L ${localS.x},${localS.y}`,
+      el: frag.el,
+      localToScreen: frag.localToScreen
+    }
+  })
 }
 
 // ── Circular-arc overlap detection and merging ──────────────────────────────
@@ -695,6 +857,10 @@ export const disconnectedLineRule: CheckRule = {
     const segments = collectSegments(doc)
     if (segments.length === 0) return
 
+    // Compute DOM order so we know which style group renders on top
+    const domIndex = new Map<Element, number>()
+    Array.from(doc.querySelectorAll('*')).forEach((el, i) => domIndex.set(el, i))
+
     const groups = new Map<string, PathFrag[]>()
     for (const seg of segments) {
       const key = styleKey(seg.el)
@@ -702,8 +868,31 @@ export const disconnectedLineRule: CheckRule = {
       groups.get(key)!.push(seg)
     }
 
-    for (const segs of groups.values()) {
-      const chains = chainFrags(mergeCollinearOverlaps(deduplicateFragsInGroup(segs)))
+    // Build cleaned frags per group first (dedup + merge within group)
+    const cleanedGroups = new Map<string, PathFrag[]>()
+    for (const [key, segs] of groups.entries()) {
+      cleanedGroups.set(key, mergeCollinearOverlaps(deduplicateFragsInGroup(segs)))
+    }
+
+    // Cross-group subtraction: for each frag, subtract coverage only from frags in other
+    // groups whose source element has a HIGHER DOM index (rendered on top of this frag).
+    // Per-frag comparison is correct when groups have elements at mixed DOM positions.
+    const allFragsByGroup = Array.from(cleanedGroups.entries())
+    for (const [key, frags] of allFragsByGroup) {
+      const otherFrags = allFragsByGroup
+        .filter(([k]) => k !== key)
+        .flatMap(([, fs]) => fs)
+      const subtracted = frags.flatMap(frag => {
+        const fragDomIdx = domIndex.get(frag.el) ?? 0
+        const covers = otherFrags.filter(c => (domIndex.get(c.el) ?? 0) > fragDomIdx)
+        return covers.length > 0 ? subtractLinearCoverage(frag, covers) : [frag]
+      })
+      cleanedGroups.set(key, subtracted)
+    }
+
+    for (const [, segs] of cleanedGroups.entries()) {
+      if (segs.length === 0) continue
+      const chains = chainFrags(segs)
       const refEl = segs[0].el
       const groupParent = refEl.parentNode!
       for (const chain of chains) {

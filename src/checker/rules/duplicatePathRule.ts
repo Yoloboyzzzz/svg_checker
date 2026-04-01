@@ -91,15 +91,20 @@ function pathBBoxKey(el: Element): string {
   return `bbox|${minX}|${maxX}|${minY}|${maxY}|transform=${transform}`
 }
 
-function hasCurveCommands(d: string): boolean {
-  return /[CcSsQqTtAa]/.test(d)
+// pathBBoxKey is only safe for bezier curves (C/S/Q/T): their d-string numbers
+// are all coordinates, so min/max gives a meaningful bounding box.
+// Arc commands (A/a) interleave rx,ry,rotation,flags with coordinates, so the
+// positional number extraction produces a nonsensical bbox (e.g. radius=1396
+// would dominate and cause false collisions with unrelated arcs).
+function hasBezierCommands(d: string): boolean {
+  return /[CcSsQqTt]/.test(d)
 }
 
 function elementKey(el: Element): string {
   const tag = (el.localName ?? el.tagName).toLowerCase()
   if (tag === 'line') return lineKey(el)
   const d = el.getAttribute('d') ?? ''
-  return hasCurveCommands(d) ? pathBBoxKey(el) : pathKey(el)
+  return hasBezierCommands(d) ? pathBBoxKey(el) : pathKey(el)
 }
 
 // Geometry-only key for <line> elements — endpoints sorted so reversed copies match
@@ -156,15 +161,19 @@ export const duplicatePathRule: CheckRule = {
   fix(doc: Document): void {
     const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !isInText(p) && !hasFill(p) && !isBlack(p))
     const lines = Array.from(doc.querySelectorAll('line')).filter(l => !isInDefs(l) && !isInText(l) && !isBlack(l))
+
+    // Track last-seen element per key — last in DOM order = rendered on top = priority.
+    // Remove all earlier duplicates so the topmost element survives.
     const seen = new Map<string, Element>()
+    const toRemove: Element[] = []
 
     for (const el of [...paths, ...lines]) {
       const key = elementKey(el)
       if (seen.has(key)) {
-        el.parentNode?.removeChild(el)
-      } else {
-        seen.set(key, el)
+        toRemove.push(seen.get(key)!)  // earlier (bottom) element loses
       }
+      seen.set(key, el)  // always track the latest (top) element
     }
+    for (const el of toRemove) el.parentNode?.removeChild(el)
   }
 }
