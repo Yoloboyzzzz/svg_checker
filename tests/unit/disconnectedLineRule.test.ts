@@ -220,4 +220,90 @@ describe('disconnectedLineRule.fix()', () => {
     const result = disconnectedLineRule.check(doc)
     expect(result.pass).toBe(true)
   })
+
+  it('detects two cubic-bezier paths sharing an endpoint as a violation', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    // Path A: cubic curve ending at (10, 5); Path B: cubic curve starting at (10, 5)
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path style="fill:none;stroke:#f00" d="M 0,0 C 2,1 8,4 10,5"/>
+      <path style="fill:none;stroke:#f00" d="M 10,5 C 12,6 18,9 20,10"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    const result = disconnectedLineRule.check(doc)
+    expect(result.pass).toBe(false)
+    expect(result.violationCount).toBe(2)
+  })
+
+  it('joins two cubic-bezier paths sharing an endpoint after fix', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path style="fill:none;stroke:#f00" d="M 0,0 C 2,1 8,4 10,5"/>
+      <path style="fill:none;stroke:#f00" d="M 10,5 C 12,6 18,9 20,10"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    disconnectedLineRule.fix(doc)
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => p.getAttribute('style')?.includes('stroke:#f00'))
+    expect(paths.length).toBe(1)
+    expect(paths[0].getAttribute('d')).toContain('C')
+  })
+
+  it('joins a cubic-bezier path with an adjacent linear path', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    // Linear segment ending at (10,5) + cubic curve starting at (10,5)
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path style="fill:none;stroke:#f00" d="M 0,0 L 10,5"/>
+      <path style="fill:none;stroke:#f00" d="M 10,5 C 12,6 18,9 20,10"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    disconnectedLineRule.fix(doc)
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => p.getAttribute('style')?.includes('stroke:#f00'))
+    expect(paths.length).toBe(1)
+  })
+
+  it('removes lower-priority duplicate curve when higher-priority curve has same endpoints (cross-group, ~0.1mm)', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    // Two curves with same endpoints but different style groups (different stroke colors).
+    // The blue one (#00f) has a higher DOM index → rendered on top.
+    // The red one (#f00) should be removed as a lower-priority duplicate.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path style="fill:none;stroke:#f00" d="M 0,0 C 2,1 8,4 10,5"/>
+      <path style="fill:none;stroke:#00f" d="M 0,0 C 2,1 8,4 10,5"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    disconnectedLineRule.fix(doc)
+    const redPaths = Array.from(doc.querySelectorAll('path')).filter(p => p.getAttribute('style')?.includes('stroke:#f00'))
+    const bluePaths = Array.from(doc.querySelectorAll('path')).filter(p => p.getAttribute('style')?.includes('stroke:#00f'))
+    expect(redPaths.length).toBe(0)   // lower-priority (lower DOM index) removed
+    expect(bluePaths.length).toBe(1)  // higher-priority survives
+  })
+
+  it('keeps both curves when they have the same endpoints but the lower-DOM one is higher priority (no removal)', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    // The red (#f00) path comes AFTER the blue one → red has HIGHER DOM index (wins).
+    // Blue should be removed.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path style="fill:none;stroke:#00f" d="M 0,0 C 2,1 8,4 10,5"/>
+      <path style="fill:none;stroke:#f00" d="M 0,0 C 2,1 8,4 10,5"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    disconnectedLineRule.fix(doc)
+    const redPaths = Array.from(doc.querySelectorAll('path')).filter(p => p.getAttribute('style')?.includes('stroke:#f00'))
+    const bluePaths = Array.from(doc.querySelectorAll('path')).filter(p => p.getAttribute('style')?.includes('stroke:#00f'))
+    expect(bluePaths.length).toBe(0)  // lower-priority (lower DOM index) removed
+    expect(redPaths.length).toBe(1)   // higher-priority survives
+  })
+
+  it('joins cubic-bezier path with implicit repeated segments (c with 12 numbers)', async () => {
+    const { disconnectedLineRule } = await import('../../src/checker/rules/disconnectedLineRule')
+    // A path like path37: one c command with two 6-number segments
+    // Segment1 ends at (2,3); Segment2 ends at (4,1). Path B starts at (4,1).
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">
+      <path style="fill:none;stroke:#f00" d="M 0,0 c 0.5,1 1.5,2 2,3 0.5,-0.5 1.5,-1.5 2,-2"/>
+      <path style="fill:none;stroke:#f00" d="M 4,1 L 10,1"/>
+    </svg>`
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    disconnectedLineRule.fix(doc)
+    const paths = Array.from(doc.querySelectorAll('path')).filter(p => p.getAttribute('style')?.includes('stroke:#f00'))
+    expect(paths.length).toBe(1)
+  })
 })

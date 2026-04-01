@@ -299,6 +299,59 @@ function extractQFrag(el: Element): PathFrag | null {
   }
 }
 
+// Parses paths that contain only M/m and C/c commands (cubic beziers).
+// Converts all relative coords to absolute, chains segments into a single
+// PathFrag from start to end.
+// Reversing a cubic segment `C x1,y1 x2,y2 ex,ey` from (ex,ey) back to start:
+//   swap control points: new_c1 = old_c2, new_c2 = old_c1, endpoint = old start
+function extractCFrag(el: Element): PathFrag | null {
+  const d = el.getAttribute('d') ?? ''
+  if (/[QqSsTtAaZzLlHhVv]/.test(d)) return null
+  if (!/[Cc]/.test(d)) return null
+  if ((d.match(/[Mm]/g) ?? []).length !== 1) return null
+
+  const mMatch = d.match(/^[\s]*[Mm]\s*([-+\d.eE]+)[,\s]+([-+\d.eE]+)/)
+  if (!mMatch) return null
+  const startX = parseFloat(mMatch[1]), startY = parseFloat(mMatch[2])
+  let curX = startX, curY = startY
+
+  const forwardParts: string[] = []
+  const reverseParts: string[] = []
+
+  // Tokenize by command letter so implicit segment repetition is handled
+  const tokens = d.trim().split(/(?=[MmCc])/)
+  for (const token of tokens) {
+    const cmd = token[0]
+    if (cmd === 'M' || cmd === 'm') continue
+    if (cmd !== 'C' && cmd !== 'c') continue
+    const isRel = cmd === 'c'
+    const nums = parseNums(token.slice(1))
+    // Each cubic segment consumes 6 numbers: x1 y1 x2 y2 ex ey
+    for (let i = 0; i + 5 < nums.length; i += 6) {
+      const x1 = isRel ? curX + nums[i]   : nums[i]
+      const y1 = isRel ? curY + nums[i+1] : nums[i+1]
+      const x2 = isRel ? curX + nums[i+2] : nums[i+2]
+      const y2 = isRel ? curY + nums[i+3] : nums[i+3]
+      const ex = isRel ? curX + nums[i+4] : nums[i+4]
+      const ey = isRel ? curY + nums[i+5] : nums[i+5]
+      forwardParts.push(`C ${x1},${y1} ${x2},${y2} ${ex},${ey}`)
+      // Reverse: swap c1↔c2, endpoint becomes old start
+      reverseParts.push(`C ${x2},${y2} ${x1},${y1} ${curX},${curY}`)
+      curX = ex; curY = ey
+    }
+  }
+
+  if (forwardParts.length === 0) return null
+
+  return {
+    start: { x: startX, y: startY },
+    end: { x: curX, y: curY },
+    forwardD: forwardParts.join(' '),
+    reverseD: reverseParts.reverse().join(' '),
+    el
+  }
+}
+
 // Parses paths that contain a single arc command (a/A), with an optional
 // leading M/m. Preserves the arc parameters so the curve survives the merge.
 // Reversing an arc means flipping the sweep-flag and negating relative offsets.
@@ -371,10 +424,14 @@ function collectSegments(doc: Document): PathFrag[] {
       result.push(...linears.map(f => ({ ...f, localToScreen: lts })))
       continue
     }
+    const mat = getComputedTransform(el)
+    const lts = isIdentityMat(mat) ? undefined : mat
     const q = extractQFrag(el)
-    if (q) { result.push(q); continue }
+    if (q) { result.push({ ...q, localToScreen: lts }); continue }
+    const c = extractCFrag(el)
+    if (c) { result.push({ ...c, localToScreen: lts }); continue }
     const arc = extractArcFrag(el)
-    if (arc) result.push(arc)
+    if (arc) result.push({ ...arc, localToScreen: lts })
   }
 
   return result
@@ -888,6 +945,43 @@ export const disconnectedLineRule: CheckRule = {
         return covers.length > 0 ? subtractLinearCoverage(frag, covers) : [frag]
       })
       cleanedGroups.set(key, subtracted)
+    }
+
+    // Cross-group curve deduplication: if a higher-priority curve frag (Q or C,
+    // i.e. non-L) from any group has the same start+end endpoints as a lower-priority
+    // curve frag within 0.4 SVG units (≈ 0.1 mm), remove the lower-priority one.
+    const CURVE_EPS = 0.4
+    const nearEnough = (a: Point, b: Point): boolean =>
+      Math.abs(a.x - b.x) < CURVE_EPS && Math.abs(a.y - b.y) < CURVE_EPS
+    // Snapshot all curve frags once so removal from one group doesn't affect another
+    const curveFragSnapshot: Array<{ frag: PathFrag; domIdx: number }> = []
+    for (const frags of cleanedGroups.values()) {
+      for (const frag of frags) {
+        if (!frag.forwardD.trimStart().startsWith('L')) {
+          curveFragSnapshot.push({ frag, domIdx: domIndex.get(frag.el) ?? 0 })
+        }
+      }
+    }
+    for (const [key, frags] of Array.from(cleanedGroups.entries())) {
+      const deduped = frags.filter(frag => {
+        if (frag.forwardD.trimStart().startsWith('L')) return true
+        const fragDomIdx = domIndex.get(frag.el) ?? 0
+        // Convert this frag's endpoints to screen space
+        const fragMat = frag.localToScreen ?? identityMat()
+        const fragSS = applyMat(fragMat, frag.start)
+        const fragES = applyMat(fragMat, frag.end)
+        return !curveFragSnapshot.some(({ frag: other, domIdx: otherDomIdx }) => {
+          if (other.el === frag.el) return false
+          if (otherDomIdx <= fragDomIdx) return false  // only a higher-DOM element can cover this
+          // Convert other frag to screen space too
+          const otherMat = other.localToScreen ?? identityMat()
+          const otherSS = applyMat(otherMat, other.start)
+          const otherES = applyMat(otherMat, other.end)
+          return (nearEnough(fragSS, otherSS) && nearEnough(fragES, otherES)) ||
+                 (nearEnough(fragSS, otherES) && nearEnough(fragES, otherSS))
+        })
+      })
+      cleanedGroups.set(key, deduped)
     }
 
     for (const [, segs] of cleanedGroups.entries()) {
