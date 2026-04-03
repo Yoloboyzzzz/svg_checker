@@ -26,19 +26,45 @@ function isBlackColor(val: string): boolean {
     /^rgb\(\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(v)
 }
 
-function isBlack(el: Element): boolean {
-  const styleProps: Record<string, string> = {}
+function isRedColor(val: string): boolean {
+  const v = val.trim().toLowerCase()
+  return v === 'red' || v === '#f00' || v === '#ff0000' ||
+    /^rgb\(\s*255\s*,\s*0\s*,\s*0\s*\)$/.test(v)
+}
+
+function isBlueColor(val: string): boolean {
+  const v = val.trim().toLowerCase()
+  return v === 'blue' || v === '#00f' || v === '#0000ff' ||
+    /^rgb\(\s*0\s*,\s*0\s*,\s*255\s*\)$/.test(v)
+}
+
+function getStyleProps(el: Element): Record<string, string> {
+  const props: Record<string, string> = {}
   const styleAttr = el.getAttribute('style') ?? ''
   for (const decl of styleAttr.split(';')) {
     const colon = decl.indexOf(':')
     if (colon === -1) continue
-    styleProps[decl.slice(0, colon).trim()] = decl.slice(colon + 1).trim()
+    props[decl.slice(0, colon).trim()] = decl.slice(colon + 1).trim()
   }
+  return props
+}
+
+function isBlack(el: Element): boolean {
+  const styleProps = getStyleProps(el)
   const fillVal = styleProps['fill'] ?? el.getAttribute('fill') ?? ''
   const strokeVal = styleProps['stroke'] ?? el.getAttribute('stroke') ?? ''
   // SVG default fill is black — absent fill means black
   if (fillVal === '') return true
   return isBlackColor(fillVal) || isBlackColor(strokeVal)
+}
+
+// Returns 0 for red, 1 for blue, 2 for everything else
+function colorPriority(el: Element): number {
+  const styleProps = getStyleProps(el)
+  const fillVal = styleProps['fill'] ?? el.getAttribute('fill') ?? ''
+  if (isRedColor(fillVal)) return 0
+  if (isBlueColor(fillVal)) return 1
+  return 2
 }
 
 function isCompound(d: string): boolean {
@@ -143,6 +169,40 @@ function hasDrawCommands(d: string): boolean {
   return /[LlHhVvCcSsQqTtAa]/.test(d)
 }
 
+type Bounds = { x1: number; y1: number; x2: number; y2: number }
+
+function approxBounds(d: string): Bounds | null {
+  const xs: number[] = [], ys: number[] = []
+  let cx = 0, cy = 0
+  const tokens = d.trim().split(/(?=[MmLlHhVvCcSsQqTtAaZz])/).filter(t => t.trim())
+  for (const token of tokens) {
+    const cmd = token.trim()[0]
+    const args = (token.slice(1).match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g) ?? []).map(Number)
+    switch (cmd) {
+      case 'M': case 'L': case 'T':
+        for (let i = 0; i + 1 < args.length; i += 2) { cx = args[i]; cy = args[i + 1]; xs.push(cx); ys.push(cy) } break
+      case 'm': case 'l': case 't':
+        for (let i = 0; i + 1 < args.length; i += 2) { cx += args[i]; cy += args[i + 1]; xs.push(cx); ys.push(cy) } break
+      case 'H': for (const a of args) { cx = a; xs.push(cx) } break
+      case 'h': for (const a of args) { cx += a; xs.push(cx) } break
+      case 'V': for (const a of args) { cy = a; ys.push(cy) } break
+      case 'v': for (const a of args) { cy += a; ys.push(cy) } break
+      case 'C': for (let i = 0; i + 5 < args.length; i += 6) { xs.push(args[i], args[i + 2], args[i + 4]); ys.push(args[i + 1], args[i + 3], args[i + 5]); cx = args[i + 4]; cy = args[i + 5] } break
+      case 'c': for (let i = 0; i + 5 < args.length; i += 6) { xs.push(cx + args[i], cx + args[i + 2], cx + args[i + 4]); ys.push(cy + args[i + 1], cy + args[i + 3], cy + args[i + 5]); cx += args[i + 4]; cy += args[i + 5] } break
+      case 'S': case 'Q': for (let i = 0; i + 3 < args.length; i += 4) { xs.push(args[i], args[i + 2]); ys.push(args[i + 1], args[i + 3]); cx = args[i + 2]; cy = args[i + 3] } break
+      case 's': case 'q': for (let i = 0; i + 3 < args.length; i += 4) { xs.push(cx + args[i], cx + args[i + 2]); ys.push(cy + args[i + 1], cy + args[i + 3]); cx += args[i + 2]; cy += args[i + 3] } break
+      case 'A': for (let i = 0; i + 6 < args.length; i += 7) { xs.push(args[i + 5]); ys.push(args[i + 6]); cx = args[i + 5]; cy = args[i + 6] } break
+      case 'a': for (let i = 0; i + 6 < args.length; i += 7) { xs.push(cx + args[i + 5]); ys.push(cy + args[i + 6]); cx += args[i + 5]; cy += args[i + 6] } break
+    }
+  }
+  if (!xs.length || !ys.length) return null
+  return { x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys) }
+}
+
+function boundsOverlap(a: Bounds, b: Bounds): boolean {
+  return a.x1 <= b.x2 && a.x2 >= b.x1 && a.y1 <= b.y2 && a.y2 >= b.y1
+}
+
 export const compoundPathRule: CheckRule = {
   category: 'compound-paths',
   label: 'No Compound Paths',
@@ -170,22 +230,64 @@ export const compoundPathRule: CheckRule = {
 
   fix(doc: Document): void {
     const paths = Array.from(doc.querySelectorAll('path')).filter(p => !isInDefs(p) && !isInText(p) && !isBlack(p))
-    for (const path of paths) {
-      const d = path.getAttribute('d') ?? ''
-      if (!isCompound(d)) continue
-      const subPaths = splitCompoundPath(d).filter(hasDrawCommands)
+    const compoundPaths = paths.filter(p => isCompound(p.getAttribute('d') ?? ''))
+
+    // Group compound paths by parent so we can sort within each group
+    const byParent = new Map<Node, Element[]>()
+    for (const path of compoundPaths) {
       const parent = path.parentNode!
-      if (subPaths.length === 0) {
+      if (!byParent.has(parent)) byParent.set(parent, [])
+      byParent.get(parent)!.push(path)
+    }
+
+    for (const [parent, group] of byParent) {
+      // Capture insertion anchor (node before the first compound path in this group)
+      const anchor = group[0].previousSibling
+
+      // Collect all sub-paths from every compound path in this group
+      const collected: Array<{ el: Element; priority: number }> = []
+      for (const path of group) {
+        const d = path.getAttribute('d') ?? ''
+        const subPaths = splitCompoundPath(d).filter(hasDrawCommands)
+        const priority = colorPriority(path)
+        const originalId = path.getAttribute('id')
+        let firstOfPath = true
+        for (const subD of subPaths) {
+          const newPath = path.cloneNode(false) as Element
+          newPath.setAttribute('d', subD)
+          if (firstOfPath && originalId) {
+            newPath.setAttribute('id', originalId)
+          } else {
+            newPath.removeAttribute('id')
+          }
+          firstOfPath = false
+          collected.push({ el: newPath, priority })
+        }
         parent.removeChild(path)
-        continue
       }
-      for (let i = subPaths.length - 1; i >= 0; i--) {
-        const newPath = path.cloneNode(false) as Element
-        newPath.setAttribute('d', subPaths[i])
-        if (i > 0) newPath.removeAttribute('id')
-        parent.insertBefore(newPath, path.nextSibling)
+
+      // Sort: only reorder paths that overlap; Red (0) → Blue (1) → everything else (2).
+      // Non-overlapping paths keep their original relative order.
+      const bounds = collected.map(item => approxBounds(item.el.getAttribute('d') ?? ''))
+      let swapped = true
+      while (swapped) {
+        swapped = false
+        for (let i = 0; i + 1 < collected.length; i++) {
+          const bi = bounds[i], bj = bounds[i + 1]
+          if (bi && bj && boundsOverlap(bi, bj) && collected[i].priority > collected[i + 1].priority) {
+            ;[collected[i], collected[i + 1]] = [collected[i + 1], collected[i]]
+            ;[bounds[i], bounds[i + 1]] = [bounds[i + 1], bounds[i]]
+            swapped = true
+          }
+        }
       }
-      parent.removeChild(path)
+
+      // Insert sorted paths at the position of the first compound path
+      let insertAfter = anchor
+      for (const { el } of collected) {
+        parent.insertBefore(el, insertAfter ? insertAfter.nextSibling : parent.firstChild)
+        insertAfter = el
+      }
     }
   }
 }
